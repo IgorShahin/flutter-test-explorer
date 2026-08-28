@@ -37,20 +37,12 @@ class TestExecutionService(private val project: Project, private val parent: Dis
     init {
         com.intellij.openapi.util.Disposer.register(parent) { disposed = true; pending.clear() }
         project.messageBus.connect(parent).subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
-            override fun processStarted(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler) {
-                if (active == null || env.runnerAndConfigurationSettings !== active) return
-                handler.addProcessListener(object : com.intellij.execution.process.ProcessAdapter() {
-                    override fun processWillTerminate(event: com.intellij.execution.process.ProcessEvent, willBeDestroyed: Boolean) {
-                        if (willBeDestroyed) ApplicationManager.getApplication().invokeLater { pending.clear() }
-                    }
-                })
-            }
             override fun processTerminated(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler, exitCode: Int) {
                 if (active == null || env.runnerAndConfigurationSettings !== active) return
                 ApplicationManager.getApplication().invokeLater {
                     active = null
                     if (disposed) return@invokeLater
-                    if (exitCode != 0) {
+                    if (!canContinueBatch(handler, exitCode)) {
                         if (pending.isNotEmpty()) notifyError("Test run stopped or failed. Remaining files were not started.")
                         pending.clear()
                     } else startNext()
@@ -76,34 +68,49 @@ class TestExecutionService(private val project: Project, private val parent: Dis
         if (plan.error != null) { notifyError(plan.error); return }
         val arguments = settings.globalArguments
         preparing = true
-        ReadAction.nonBlocking<List<Pair<ExplorerNode, RunnerAndConfigurationSettings>>> {
+        ReadAction.nonBlocking<Result<List<Pair<ExplorerNode, RunnerAndConfigurationSettings>>>> {
             // Validate the ENTIRE batch before starting anything, avoiding partial accidental runs.
-            plan.targets.map { node ->
-                val file = checkedSource(node)
-                val psi = PsiManager.getInstance(project).findFile(file)
-                    ?: error("Test source no longer exists. Refresh the explorer.")
-                val config = factory.create(requireNotNull(node.runTarget), node.label,
-                    FlutterUtils.isInFlutterProject(project, psi), arguments)
-                config.configuration.checkConfiguration()
-                node to config
+            try {
+                Result.success(plan.targets.map { execution ->
+                    val node = execution.source
+                    val file = checkedSource(node)
+                    val psi = PsiManager.getInstance(project).findFile(file)
+                        ?: error("Test source no longer exists. Refresh the explorer.")
+                    val config = factory.create(execution.target, node.label,
+                        FlutterUtils.isInFlutterProject(project, psi), arguments, execution.nameFilter)
+                    config.configuration.checkConfiguration()
+                    node to config
+                })
+            } catch (cancelled: ProcessCanceledException) {
+                throw cancelled
+            } catch (cancelled: java.util.concurrent.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // Expected validation failures are user-facing outcomes, not rejected promises
+                // (NonBlockingReadAction reports those as plugin errors in the IDE).
+                Result.failure(error)
             }
         }
             .inSmartMode(project)
             .expireWith(parent)
-            .finishOnUiThread(ModalityState.any()) { configurations ->
+            .finishOnUiThread(ModalityState.any()) { result ->
                 preparing = false
                 if (!disposed) {
-                    pending.addAll(configurations)
-                    startNext()
+                    result.fold(onSuccess = { configurations ->
+                        pending.addAll(configurations)
+                        startNext()
+                    }, onFailure = { error ->
+                        notifyError(error.message ?: "The IDE cannot run this test configuration.")
+                    })
                 }
             }
             .submit(AppExecutorUtil.getAppExecutorService())
             .onError { error ->
-                if (error is ProcessCanceledException || error is java.util.concurrent.CancellationException) return@onError
                 ApplicationManager.getApplication().invokeLater {
                     preparing = false
                     pending.clear()
-                    if (!disposed) notifyError(error.message ?: "The IDE cannot run this test configuration.")
+                    if (!disposed && error !is ProcessCanceledException && error !is java.util.concurrent.CancellationException)
+                        notifyError(error.message ?: "The IDE cannot run this test configuration.")
                 }
             }
     }
@@ -140,5 +147,13 @@ class TestExecutionService(private val project: Project, private val parent: Dis
     private fun notifyError(content: String) {
         NotificationGroupManager.getInstance().getNotificationGroup("Flutter Test Explorer")
             .createNotification("Unable to run tests", content, NotificationType.WARNING).notify(project)
+    }
+
+    internal companion object {
+        fun canContinueBatch(handler: ProcessHandler, exitCode: Int): Boolean =
+            // Flutter may destroy its process on SUCCESS (willBeDestroyed=true, exit=0).
+            // IDEA's native Stop path sets TERMINATION_REQUESTED explicitly; destruction alone
+            // is not evidence of cancellation. Decide only after this file has terminated.
+            exitCode == 0 && handler.getUserData(ProcessHandler.TERMINATION_REQUESTED) != true
     }
 }

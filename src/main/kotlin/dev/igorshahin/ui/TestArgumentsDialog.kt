@@ -28,7 +28,8 @@ internal class TestArgumentsDialog(project: Project, initial: String) : DialogWr
     override fun createCenterPanel(): JComponent = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
         add(JBLabel("Global test arguments — applied to every run from this panel:"), BorderLayout.NORTH)
         add(ScrollPaneFactory.createScrollPane(editor), BorderLayout.CENTER)
-        add(JBLabel("<html>Example: --dart-define=ENV=test --dart-define=\"LABEL=Test environment\"<br>" +
-            "Use spaces or newlines. Target/name selectors belong to the explorer, not this field.</html>"), BorderLayout.SOUTH)
+        add(JBLabel("<html>Example: --dart-define=ENV=test --timeout=30s<br>" +
+            "Separate options with spaces or newlines. Target/name selectors are managed by the explorer.<br>" +
+            "Flutter 95: values containing spaces require another native option, e.g. --dart-define-from-file.</html>"), BorderLayout.SOUTH)
     }
 }

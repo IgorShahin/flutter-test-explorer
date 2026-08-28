@@ -77,7 +77,7 @@ class TestExplorerTreeBuilder {
         }
         val logicalPath = parentNames + item.name
         val children = fromTestItems(item.children, relativeFilePath, logicalPath,
-            parentIds + "${item.kind}:${item.name}@$occurrence", parentNamesStatic && item.nameIsStatic)
+            parentIds + "${item.kind}:${item.name}@$occurrence", parentNamesStatic && item.runtimeNameKnown)
         if (item.kind == DartTestKind.GROUP && children.isEmpty()) return null
         if (item.kind != DartTestKind.GROUP && !item.runnable) return null
         return MutableNode(
@@ -88,7 +88,7 @@ class TestExplorerTreeBuilder {
             runnable = item.runnable,
             runTarget = item.takeIf { it.runnable }?.let {
                 TestRunTarget(TestRunTargetKind.NAME, item.location.filePath, item.name,
-                    logicalPath.joinToString(" ").takeIf { parentNamesStatic && item.nameIsStatic })
+                    logicalPath.joinToString(" ").takeIf { parentNamesStatic && item.runtimeNameKnown })
             },
         ).apply {
             this.children += children

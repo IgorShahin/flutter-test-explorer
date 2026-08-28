@@ -10,7 +10,7 @@ Swing tree renderers are paint stamps, not live button children. The tree theref
 
 ## 2. Shared execution
 
-Toolbar Run All, Run Selected, context menu, Shift+F10 and inline Run all call the panel's `runNode(id)`, then the unchanged `TestExecutionService.run(completeModel, id)`. UI code constructs no CLI commands or configurations. Persistent exclusions, global arguments, stale-target checks, partial-file/group rejection and the sequential run queue apply identically. All five existing toolbar actions remain. No inline directory action is added.
+Toolbar Run All, Run Selected, context menu, Shift+F10 and inline Run all call the panel's `runNode(id)`, then `TestExecutionService.run(completeModel, id)`. UI code constructs no CLI commands or configurations. Persistent exclusions, global arguments, stale-target checks, FULL/PARTIAL/EMPTY scope resolution and the sequential run queue apply identically. PARTIAL groups/files use one exact-name native execution, described in [filtered execution](filtered-execution.md). All five existing toolbar actions remain. No inline directory action is added.
 
 ## 3. Review and measured bottlenecks
 

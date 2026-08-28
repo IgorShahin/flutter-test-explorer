@@ -19,6 +19,7 @@ data class DartTestItem(
     val children: List<DartTestItem> = emptyList(),
     val runnable: Boolean = true,
     val nameIsStatic: Boolean = true,
+    val runtimeNameKnown: Boolean = nameIsStatic,
 )
 
 data class DartTestFile(

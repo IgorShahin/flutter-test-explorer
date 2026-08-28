@@ -159,6 +159,7 @@ internal class DartTestDiscovery(
                 location = SourceLocation(virtualFile.path, call.textOffset, file.modificationStamp),
                 runnable = staticName && runnabilityValidator.isRunnable(call, name),
                 nameIsStatic = staticName,
+                runtimeNameKnown = staticName && nameResolver.isRuntimeNameKnown(firstArgument),
             )
         }.toMap(LinkedHashMap())
 
@@ -216,6 +217,7 @@ internal class DartTestDiscovery(
         val location: SourceLocation,
         val runnable: Boolean,
         val nameIsStatic: Boolean,
+        val runtimeNameKnown: Boolean,
         val children: MutableList<MutableTestItem> = mutableListOf(),
     ) {
         fun freezeRunnable(): DartTestItem? {
@@ -232,6 +234,7 @@ internal class DartTestDiscovery(
                 children = runnableChildren,
                 runnable = runnable,
                 nameIsStatic = nameIsStatic,
+                runtimeNameKnown = runtimeNameKnown,
             )
         }
     }

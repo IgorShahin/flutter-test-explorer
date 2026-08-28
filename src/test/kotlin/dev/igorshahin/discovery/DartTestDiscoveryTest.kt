@@ -137,6 +137,21 @@ class DartTestDiscoveryTest : BasePlatformTestCase() {
         assertEquals("UNIT_TEST_TEST", snapshot.children.single().elementKind)
     }
 
+    fun testEscapedSourceSpellingIsNotMistakenForExactRuntimeName() {
+        val result = discovery().discoverFile(dartFile("""
+            void main() {
+              group('group\nname', () { test('child', () {}); });
+              test(r'raw\name', () {});
+              test('plain', () {});
+            }
+        """.trimIndent()))!!
+        val root = dev.igorshahin.model.TestExplorerTreeBuilder().build(listOf(result))
+        val leaves = dev.igorshahin.filter.TestVisibility.leaves(root)
+        assertNull(leaves[0].runTarget!!.fullName)
+        assertEquals("raw\\name", leaves[1].runTarget!!.fullName)
+        assertEquals("plain", leaves[2].runTarget!!.fullName)
+    }
+
     private fun dartFile(text: String, name: String = "sample_test.dart"): DartFile =
         myFixture.configureByText(name, text) as DartFile
 }

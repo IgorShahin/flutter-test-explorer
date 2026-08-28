@@ -59,15 +59,19 @@ class TestVisibilityAndExecutionTest {
         assertEquals(2, planner.plan(model, model.id, emptySet()).targets.size)
         val plan = planner.plan(model, model.id, setOf(directory.id))
         assertNull(plan.error)
-        assertEquals(listOf("other_test.dart"), plan.targets.map { it.label })
+        assertEquals(listOf("other_test.dart"), plan.targets.map { it.source.label })
     }
 
     @Test fun `partially excluded scopes never broaden execution`() {
         val planner = TestExecutionPlanner()
         listOf(group, file, directory, model).forEach {
             val plan = planner.plan(model, it.id, setOf(login.id))
-            assertNotNull(plan.error)
-            assertTrue(plan.targets.isEmpty())
+            assertNull(plan.error)
+            val target = plan.targets.single { it.target.fileOrDirectoryPath == location.filePath }
+            assertEquals(TestRunTargetKind.FILE, target.target.kind)
+            val regex = Regex(requireNotNull(target.nameFilter))
+            assertTrue(regex.containsMatchIn("auth logout"))
+            assertFalse(regex.containsMatchIn("auth login"))
         }
         assertNull(planner.plan(model, logout.id, setOf(login.id)).error)
         assertNotNull(planner.plan(model, login.id, setOf(login.id)).error)
@@ -82,12 +86,16 @@ class TestVisibilityAndExecutionTest {
         assertEquals(2, first.toSet().size)
     }
 
-    @Test fun `name collision with hidden test is blocked`() {
+    @Test fun `similar hidden name switches native short target to exact filter`() {
         val overlapping = model.copy(children = model.children.map { dir -> dir.copy(children = dir.children.map { f ->
             f.copy(children = f.children.map { g -> g.copy(children = g.children.map { t ->
                 if (t.id == login.id) t.copy(runTarget = t.runTarget!!.copy(fullName = "auth logout duplicate")) else t
             }) })
         }) })
-        assertNotNull(TestExecutionPlanner().plan(overlapping, logout.id, setOf(login.id)).error)
+        val plan = TestExecutionPlanner().plan(overlapping, logout.id, setOf(login.id))
+        assertNull(plan.error)
+        val regex = Regex(plan.targets.single().nameFilter!!)
+        assertTrue(regex.containsMatchIn("auth logout"))
+        assertFalse(regex.containsMatchIn("auth logout duplicate"))
     }
 }
