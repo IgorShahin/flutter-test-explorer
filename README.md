@@ -1,0 +1,78 @@
+# Flutter Test Explorer
+
+Native IntelliJ **Tests** tool window for runnable Dart/Flutter tests.
+
+## Using the panel
+
+Open **View → Tool Windows → Tests** in a configured Dart/Flutter project. `Tests` is a standard declarative IntelliJ Tool Window: use its native menu to move it, pin/unpin it or remove it from the sidebar. Restore it through **More Tool Windows → Tests**. In the New UI, windows already on the sidebar are normally omitted from More Tool Windows. The window remains available during indexing; discovery waits for smart mode. Its public Platform `AllIcons.Nodes.TestGroup` icon is separate from the unchanged Run action icons.
+
+The toolbar provides:
+
+- **Run All in Visible Scope**: runs the files included by the persistent visibility scope.
+- **Run Selected**: selects an official test, widget test, group, nested group, file, or directory target. Also available from the context menu and **Shift+F10** while the tree is focused.
+- **Refresh Tests**: rediscovers tests. Analysis and indexing may need to finish first.
+- **Test Visibility** (funnel): persistent hierarchical checkboxes. Checking a parent includes all descendants; unchecking it excludes the subtree. Partial selection uses IntelliJ's native tri-state checkbox renderer.
+- **Global Run Arguments** (gear): project-specific additional arguments, applied to every run started by this panel.
+
+Runnable files, groups and tests also have a permanent **Run button directly before the row name**. Click that button to run its target; clicking the name only selects the row. Double-click the name to navigate to source. The inline button, toolbar, context menu and Shift+F10 all use the same execution service and safety checks. Directories keep their toolbar/context-menu run action.
+
+The search field temporarily narrows the visible tree by path/group/name; words are ANDed and `!word` or `-word` excludes a term. Search does not change saved visibility **or execution scope**: Run All runs the configured checkbox scope, and Run Selected uses the selected node's configured scope, not the temporary search results.
+
+Example global arguments (spaces or newlines are supported):
+
+```text
+--dart-define=ENV=test
+--dart-define=COUNTRY=ru
+--dart-define="LABEL=Test environment"
+```
+
+These are additional **test-runner** options, not a shell command. Use double quotes for values containing spaces (the official IntelliJ parser's convention). Flutter receives `TestFields.additionalArgs`; Dart receives `DartTestRunnerParameters.testRunnerOptions`. Use arguments appropriate to the selected runner. Name/path target selectors are not allowed in this field because they could broaden the selected scope. Existing user configurations are not changed.
+
+## Predictable execution with exclusions
+
+Run All and Run Directory build a queue of explicit, fully included test **files**, using a separate official Run session for each file. The queue is sequential (important for integration tests sharing a device) and stops on failure/cancellation. No broad directory shell command is synthesized. The scope and arguments are snapshotted when Run is pressed.
+
+If a selected group/file contains excluded tests, or Run All/Directory would include a partially excluded file, the entire request is rejected **before anything starts**, with an explanation. Run the included tests individually or include the whole group/file. The official name target uses substring matching; a named run that could also match a known hidden test is rejected.
+
+This conservative fallback is deliberate: the runners support regex selection, but there is no reliable general static mapping from annotated custom wrappers, duplicate names and dynamic registration to unique runtime test names. This version does not claim arbitrary partial-file subset execution.
+
+## Discovery and persistence
+
+Discovery dynamically finds package `test/` and `integration_test/` directories under the opened project, including nested packages and arbitrary subdirectories. Both roots appear when they contain runnable tests; missing or empty roots/branches are omitted. Candidate files include standard `*_test.dart` files **and other Dart files with an indexed `main` entrypoint**. The filename is not proof of runnability. Flutter candidates come from the **same analyzer UNIT_TEST_TEST / UNIT_TEST_GROUP entities used by Flutter gutter markers**, including custom annotated APIs recognized by the analyzer, and pass the official `FlutterUtils.isInTestDir` context check. Unopened files receive outline subscriptions too. There is no method-name fallback for Flutter wrappers or project-specific path/name list.
+
+Runnable candidates must have a literal non-interpolated name, valid PSI, registration context under top-level `main`/recognized groups, and a valid official test configuration. A recognized group with a dynamic name may remain as a **non-runnable structural parent** of runnable literal-name tests; its label shows the source expression. Helper implementations, setup bodies, arbitrary similarly named methods, comments, incomplete files, unsupported dynamic leaves and empty branches are omitted. Dart-only projects additionally resolve `test`/`group` declarations to the test packages and require an exact official producer target. Discovery never executes Dart code.
+
+The model has explicit `id`, `runnable`, source location and run target. Files/directories are structural aggregations over runnable descendants. Discovery runs in a cancellable, committed-document, smart-mode non-blocking read action. The existing tree stays visible while indexing/discovery is pending.
+
+Initial candidates use `FilenameIndex` for package roots, `FileTypeIndex` scoped to test directories and `DartComponentIndex` for entrypoints. Per-file results (including empty results) are cached by authoritative document/VFS stamp and Flutter outline revision. Debounced edits rediscover only affected candidates. Flutter's analyzer handles semantic dependency changes; Dart-only dependencies use existing import/export/part indexes, not helper PSI. New/deleted/moved files update the affected branches, preserving unaffected Swing nodes, expansion, selection and scroll where possible. Visibility/search run in the background on the cached model; they do not trigger discovery.
+
+Full candidate reconciliation is reserved for startup, explicit Refresh, SDK/root/package configuration changes, analyzer reconnection and structural changes that may introduce/remove package roots. A content edit or outline update does not search the project again. Explicit Refresh also bypasses cached results.
+
+Settings are stored per project in IntelliJ's workspace storage. IDs encode project-relative paths, node kind, enclosing group identities, name and duplicate occurrence; offsets are not persisted. Ordinary line insertions preserve selection. A rename/move is a new identity and is included by default. Stale exclusions are harmless and retained for files that return after branch changes. Identically named siblings are distinguished by occurrence; reordering indistinguishable duplicates may change their identity.
+
+## Build and verification
+
+Targets: **IntelliJ IDEA 2025.3.5**, **Dart 508.1.0**, **Flutter 95.0.0**.
+
+```bash
+./gradlew test buildPlugin verifyPluginStructure verifyPluginProjectConfiguration
+./gradlew runIde
+# Optional debug-only discovery/cache/filter/UI counters in sandbox idea.log:
+./gradlew runIde -PtestExplorerDebug
+```
+
+The installable ZIP is under `build/distributions/`. Install via **Settings → Plugins → gear → Install Plugin from Disk** and restart the IDE.
+
+Tests cover the PSI filtering pipeline, analyzer entity mapping, non-runnable/empty pruning, IDs, hierarchical visibility/tri-state, stale IDs, temporary filtering, XML settings persistence, quoting, official configuration generation and non-mutation of user configurations/templates. They also cover inline hit-testing, row selection vs execution, renderer accessibility, incremental Swing identity/state, cache hits/misses, empty results, dependency invalidation, VFS rename/move events, indexed candidate lookup and a warm-PSI performance comparison. Tests do **not** launch the application's integration tests. The unrelated bundled Vue plugin is disabled only in the test sandbox due to its IDEA 253 test-classloader resource lookup failure.
+
+## Compatibility and current limitations
+
+See [API research and compatibility notes](docs/intellij-test-infrastructure.md) for the inspected classes, public vs implementation APIs, classloader workaround, and fallback rationale.
+See [inline Run and performance report](docs/inline-run-and-performance.md) for implementation choices, measurements and remaining full-refresh conditions.
+See [native Tool Window sandbox verification](docs/native-tool-window-verification.md) for More Tool Windows, icon, dynamic roots and renderer checks.
+
+- Flutter/Dart must be installed and SDK/package resolution configured. Missing/stale analyzer data fails closed; it does not trigger heuristic discovery.
+- Full parity is intentionally narrower for dynamic/nonliteral names, helper registration and malformed PSI. Only verified literal targets in entrypoint registration contexts are shown.
+- Run All results appear in normal IntelliJ Run windows; the tree does not yet aggregate passed/failed status, coverage or history like VS Code Testing.
+- Partial-file/group execution with exclusions is blocked, not silently expanded.
+- Plugin upgrades require rechecking the implementation API adapters against the installed versions.

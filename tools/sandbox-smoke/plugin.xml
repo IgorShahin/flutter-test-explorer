@@ -1,0 +1,10 @@
+<idea-plugin>
+    <id>test.explorer.sandbox.smoke</id>
+    <name>Test Explorer Sandbox Checks</name>
+    <vendor>Local development only</vendor>
+    <version>1</version>
+    <depends>dev.igorshahin.flutter-test-explorer</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="smoke.SmokeStartup"/>
+    </extensions>
+</idea-plugin>

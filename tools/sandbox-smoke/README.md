@@ -1,0 +1,24 @@
+# Development-only native sandbox checks
+
+This is a separate plugin, not a production source set. It only acts on the synthetic project named `test_explorer_smoke`, never starts test processes, and writes its report/images into that project's directory. Do not install it into your regular IDE. Its fixture names are deliberately local to this test harness, not runtime discovery rules.
+
+1. Build the main plugin with `./gradlew test buildPlugin`.
+2. Copy `project/` into `build/test_explorer_smoke`. Run `flutter pub get --offline` there (or ordinary pub get if dependencies are not cached).
+3. Open the copied project in sandbox, configure the Flutter/Dart SDK and content root normally, and trust only that synthetic project if prompted. Ensure `test/` and `integration_test/` are under the content root. Close sandbox before installing the check plugin.
+4. Set `IDEA_SDK` to the resolved IDEA 2025.3.5 directory used by Gradle; set `SMOKE_PLUGIN` to `.intellijPlatform/sandbox/flutter-test-explorer/IU-2025.3.5/plugins/test-explorer-smoke`.
+
+From the repository root:
+
+```sh
+mkdir -p build/sandbox-smoke-classes/META-INF "$SMOKE_PLUGIN/lib"
+javac --release 21 -cp "$IDEA_SDK/lib/*" -d build/sandbox-smoke-classes tools/sandbox-smoke/SmokeStartup.java
+cp tools/sandbox-smoke/plugin.xml build/sandbox-smoke-classes/META-INF/plugin.xml
+jar --create --file "$SMOKE_PLUGIN/lib/smoke.jar" -C build/sandbox-smoke-classes .
+./gradlew runIde -PtestExplorerDebug --args="$PWD/build/test_explorer_smoke"
+```
+
+Wait for `smoke-result.txt` ending in `SUCCESS`. `tool-window.png` is rendered from the actual sandbox Swing component (not a macOS screen capture), and `tool-window-icon.png` from its registered icon. Review these images as well as the assertions. Allow up to two minutes after project startup for indexing/analysis.
+
+The harness removes Tests from the stripe using the New UI's native path, inspects the same list used by `ShowMoreToolWindowsAction`, restores via IntelliJ's own activation action, exercises hide/move/pin/unpin, verifies icon pixels and checks the discovered tree. It also checks that the native TreeUI uses the inline renderer, not a stale default renderer. These implementation APIs are confined to this development harness.
+
+After verification, stop sandbox and move the `test-explorer-smoke` plugin directory outside `plugins` to disable it. Keep the report/images for inspection. The main distribution contains only `flutter-test-explorer` and never the smoke plugin.
