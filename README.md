@@ -18,23 +18,27 @@ Runnable files, groups and tests also have a permanent **Run button directly bef
 
 The search field temporarily narrows the visible tree by path/group/name; words are ANDed and `!word` or `-word` excludes a term. Search does not change saved visibility **or execution scope**: Run All runs the configured checkbox scope, and Run Selected uses the selected node's configured scope, not the temporary search results.
 
-Example global arguments (spaces or newlines are supported):
+Example global arguments (separate options with spaces or newlines):
 
 ```text
 --dart-define=ENV=test
 --dart-define=COUNTRY=ru
---dart-define="LABEL=Test environment"
+--timeout=30s
 ```
 
-These are additional **test-runner** options, not a shell command. Use double quotes for values containing spaces (the official IntelliJ parser's convention). Flutter receives `TestFields.additionalArgs`; Dart receives `DartTestRunnerParameters.testRunnerOptions`. Use arguments appropriate to the selected runner. Name/path target selectors are not allowed in this field because they could broaden the selected scope. Existing user configurations are not changed.
+These are additional **test-runner** options, not a shell command. Flutter receives `TestFields.additionalArgs`; Dart receives `DartTestRunnerParameters.testRunnerOptions`. Use arguments appropriate to the selected runner. Flutter 95 splits its additional arguments on literal spaces without handling quotes: separators are normalized, but values containing whitespace are rejected before launching. For Dart defines with such values, use `--dart-define-from-file` with a path without spaces. Dart's native parser supports double-quoted values. Name/path target selectors are managed by the explorer because user-supplied selectors could broaden the scope. Existing user configurations and templates are not changed.
 
 ## Predictable execution with exclusions
 
-Run All and Run Directory build a queue of explicit, fully included test **files**, using a separate official Run session for each file. The queue is sequential (important for integration tests sharing a device) and stops on failure/cancellation. No broad directory shell command is synthesized. The scope and arguments are snapshotted when Run is pressed.
+Execution resolves the complete model against persistent visibility checkboxes, independently of Swing rows and temporary text search:
 
-If a selected group/file contains excluded tests, or Run All/Directory would include a partially excluded file, the entire request is rejected **before anything starts**, with an explanation. Run the included tests individually or include the whole group/file. The official name target uses substring matching; a named run that could also match a known hidden test is rejected.
+- **FULL:** the ordinary native test/group/file target, without an extra filter.
+- **PARTIAL:** one native file execution with an exact regexp union of the included tests' full names (enclosing groups + test name). Hidden test bodies do not run; Dart source is never changed.
+- **EMPTY:** no launch; “No visible tests to run”.
 
-This conservative fallback is deliberate: the runners support regex selection, but there is no reliable general static mapping from annotated custom wrappers, duplicate names and dynamic registration to unique runtime test names. This version does not claim arbitrary partial-file subset execution.
+Run All and Run Directory retain the sequential queue of explicit included **files**. Fully included files use native file targets; partially included files get one filter each; excluded files are omitted. The queue stops on failure/cancellation. One process per file prevents a name in a hidden file from being selected by a cross-file regexp. The complete batch and global arguments are validated before any launch.
+
+Native short-name targets use substring matching. If a FULL selected group/test could match a known hidden sibling in the same file, it gets an exact filter as a safety exception. Unknown full runtime names or identical full names split across the selection boundary cannot be safely distinguished and are rejected with an explanation. See [filtered execution and native verification](docs/filtered-execution.md).
 
 ## Discovery and persistence
 
@@ -74,5 +78,5 @@ See [native Tool Window sandbox verification](docs/native-tool-window-verificati
 - Flutter/Dart must be installed and SDK/package resolution configured. Missing/stale analyzer data fails closed; it does not trigger heuristic discovery.
 - Full parity is intentionally narrower for dynamic/nonliteral names, helper registration and malformed PSI. Only verified literal targets in entrypoint registration contexts are shown.
 - Run All results appear in normal IntelliJ Run windows; the tree does not yet aggregate passed/failed status, coverage or history like VS Code Testing.
-- Partial-file/group execution with exclusions is blocked, not silently expanded.
+- Partial groups/files use exact filters; unknown runtime names and indistinguishable duplicate full names still fail closed. Directory/Run All use one native session per included file.
 - Plugin upgrades require rechecking the implementation API adapters against the installed versions.

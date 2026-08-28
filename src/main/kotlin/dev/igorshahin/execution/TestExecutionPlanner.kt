@@ -4,52 +4,72 @@ import dev.igorshahin.filter.TestVisibility
 import dev.igorshahin.model.ExplorerNode
 import dev.igorshahin.model.ExplorerNodeKind
 import dev.igorshahin.model.TestRunTargetKind
+import dev.igorshahin.model.TestRunTarget
 
-data class TestExecutionPlan(val targets: List<ExplorerNode> = emptyList(), val error: String? = null)
+data class PlannedTestExecution(val source: ExplorerNode, val target: TestRunTarget, val nameFilter: String? = null)
 
-/** Never broadens a partially selected file/group to the official whole-file target. */
+data class TestExecutionPlan(
+    val targets: List<PlannedTestExecution> = emptyList(),
+    val error: String? = null,
+    val scopeState: ExecutionScopeState? = null,
+)
+
+/** FULL uses native targets; PARTIAL uses one exact-name execution per affected file. */
 class TestExecutionPlanner {
+    private val resolver = ExecutionScopeResolver()
+
     fun plan(complete: ExplorerNode, selectedId: String, excluded: Set<String>): TestExecutionPlan {
-        val selected = TestVisibility.find(complete, selectedId)
+        val scope = resolver.resolve(complete, selectedId, excluded)
+        val selected = scope.selected
             ?: return TestExecutionPlan(error = "This test no longer exists. Refresh the explorer.")
-        val visibleRoot = TestVisibility.apply(complete, excluded)
-        val visible = TestVisibility.find(visibleRoot, selectedId)
-            ?: return TestExecutionPlan(error = "This test is excluded from the Test Explorer scope.")
-        if (TestVisibility.leaves(visible).isEmpty()) return TestExecutionPlan(error = "No tests are included in this scope.")
-        val visibleIds = TestVisibility.leaves(visibleRoot).map { it.id }.toSet()
-        if (selected.kind == ExplorerNodeKind.ROOT || selected.kind == ExplorerNodeKind.DIRECTORY) {
-            // Explicit files, not a broad folder: never include undiscovered or hidden files.
+        if (scope.state == ExecutionScopeState.EMPTY) return TestExecutionPlan(
+            error = "No visible tests to run", scopeState = scope.state)
+        val allByFile = TestVisibility.leaves(complete).groupBy { it.location?.filePath }
+        val targets = mutableListOf<PlannedTestExecution>()
+        fun add(node: ExplorerNode): String? {
+            val all = TestVisibility.leaves(node)
+            val included = all.filter { it.id in scope.visibleTestIds }
+            if (included.isEmpty()) return null
+            val filePath = node.location?.filePath ?: return "Test source no longer exists. Refresh the explorer."
+            val sameFile = allByFile[filePath].orEmpty()
+            val target = node.runTarget
+            val full = included.size == all.size
+            // A native short-name target can overlap a hidden sibling outside the selected scope.
+            val nativeOverlapsHidden = target?.kind == TestRunTargetKind.NAME && sameFile.any {
+                it.id !in scope.visibleTestIds &&
+                    (it.runTarget?.fullName == null || it.runTarget.fullName.contains(target.testName.orEmpty()))
+            }
+            if (full && node.runnable && target != null && !nativeOverlapsHidden) {
+                targets += PlannedTestExecution(node, target)
+                return null
+            }
+            val includedIds = included.map { it.id }.toSet()
+            val other = sameFile.filter { it.id !in includedIds }
+            if ((included + other).any { it.runTarget?.fullName == null }) return "Cannot safely filter this file: " +
+                "a test's full runtime name is unknown (dynamic group or unsupported literal). " +
+                    "Use static names or include the whole file. Nothing was started."
+            val names = included.map { requireNotNull(it.runTarget?.fullName) }
+            val nameSet = names.toSet()
+            if (other.any { it.runTarget?.fullName in nameSet }) return "Cannot safely separate visible and excluded tests " +
+                "with identical full names in this file. " +
+                    "Give them distinct names or include all duplicates. Nothing was started."
+            targets += PlannedTestExecution(node, TestRunTarget(TestRunTargetKind.FILE, filePath), ExactTestNameFilter.create(names))
+            return null
+        }
+        val nodes = if (selected.kind == ExplorerNodeKind.ROOT || selected.kind == ExplorerNodeKind.DIRECTORY) {
+            // The native models accept one file or one directory, not a file→filter mapping.
+            // Retain explicit file batches so hidden files/other packages cannot be selected by a
+            // cross-file name collision. Several tests in the SAME file still share one process.
             val files = mutableListOf<ExplorerNode>()
             fun collect(node: ExplorerNode) {
                 if (node.kind == ExplorerNodeKind.FILE) files += node else node.children.forEach(::collect)
             }
-            collect(visible)
-            val partial = files.any { file ->
-                val original = TestVisibility.find(complete, file.id)!!
-                TestVisibility.leaves(original).any { it.id !in visibleIds }
-            }
-            if (partial) return partialScope()
-            return TestExecutionPlan(files)
+            collect(selected)
+            files
+        } else listOf(selected)
+        nodes.forEach { node ->
+            add(node)?.let { return TestExecutionPlan(error = it, scopeState = scope.state) }
         }
-        if (!selected.runnable || selected.runTarget == null) {
-            return TestExecutionPlan(error = "This is a structural node. Run one of its tests instead.")
-        }
-        if (TestVisibility.leaves(selected).any { it.id !in visibleIds }) return partialScope()
-        if (selected.runTarget.kind == TestRunTargetKind.NAME) {
-            val name = selected.runTarget.testName.orEmpty()
-            // Gutter name targets use substring matching. A hidden same-name test elsewhere in
-            // the file must not run as an accidental side effect of this apparently narrow run.
-            val collision = TestVisibility.leaves(complete).any { test ->
-                test.id !in visibleIds && test.location?.filePath == selected.location?.filePath &&
-                    (test.runTarget?.fullName == null || test.runTarget.fullName.contains(name))
-            }
-            if (collision) return TestExecutionPlan(error =
-                "The official name target also matches a hidden test in this file. Include it or use the IDE runner explicitly.")
-        }
-        return TestExecutionPlan(listOf(selected))
+        return TestExecutionPlan(targets, scopeState = scope.state)
     }
-
-    private fun partialScope() = TestExecutionPlan(error =
-        "This scope contains hidden tests. A broad run could execute them. Run included tests individually, " +
-            "or include the whole file/group in Visibility. Nothing was started.")
 }
