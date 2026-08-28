@@ -9,5 +9,6 @@
     <extensions defaultExtensionNs="com.intellij">
         <postStartupActivity implementation="smoke.SmokeStartup"/>
         <postStartupActivity implementation="smoke.FilteredExecutionSmoke"/>
+        <postStartupActivity implementation="smoke.MultiFileExecutionSmoke"/>
     </extensions>
 </idea-plugin>

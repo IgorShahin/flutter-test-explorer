@@ -13,6 +13,18 @@ Flutter's public `useRegexp(true)` is misleading for this use case: `FlutterSdk.
 
 Both configuration models accept one file/directory, not a file → individual filter mapping. A single directory regexp could match the same full name in a hidden file, or cross package boundaries. Directory/Run All therefore retain explicit sequential file sessions: one native execution per included file, never one execution per included test.
 
+Run All is orchestration, not one shared RunConfiguration. The same planner handles project/root and directory actions. FULL/PARTIAL/EMPTY is determined independently per entrypoint, even when the overall root is PARTIAL:
+
+| File visibility | Execution plan |
+| --- | --- |
+| A: group A test 1 included, test 2 excluded | Native file A with an exact filter for `group A test 1` |
+| B: group B tests 3 and 4 included | Ordinary native Run File B, no name filter |
+| C: all descendants excluded | No configuration or execution |
+
+Several included groups within A still share A's one filter. No group name/filter spans unrelated files. The service waits for a successful `processTerminated` event before starting the next file; failure, cancellation or a failed launch clears the remaining queue. This sequential default applies to integration tests as well.
+
+Native sandbox verification exposed a cancellation bug: Flutter can emit `processWillTerminate(willBeDestroyed=true)` and then exit **successfully**. Treating every destruction as Stop discarded all remaining files. The service now checks exit code plus `ProcessHandler.TERMINATION_REQUESTED` at completion. Inspection of IDEA 253's `ExecutionManagerImpl.Companion.stopProcess` confirms the native Stop path sets that public key before destroying the process. Normal Flutter cleanup no longer cancels the batch; explicit Stop still does, including when the process reports exit code zero.
+
 ## Scope and names
 
 `ExecutionScopeResolver` receives the complete immutable model, selected ID and saved checkbox exclusions. It collects runnable descendant leaves and resolves FULL / PARTIAL / EMPTY. No Swing row state or temporary search string is consulted. Toolbar, inline button, context menu and Run All reach the same service/planner/factory.
@@ -43,6 +55,8 @@ Files still load and groups register normally under the native runner; name sele
 
 ## Verification (2026-08-29)
 
-79 automated tests pass. Coverage includes FULL/PARTIAL/EMPTY, nested groups, file/directory/Run All, hidden ancestors, duplicate and similar names, unknown names, full-name whitespace, regex metacharacters, control characters, native tokenization, persistent settings/XML, temporary-search independence, global arguments, template non-mutation and whole-batch rejection.
+89 automated tests pass. Coverage includes FULL/PARTIAL/EMPTY, nested groups, file/directory/Run All, hidden ancestors, duplicate and similar names, unknown names, full-name whitespace, regex metacharacters, control characters, native tokenization, persistent settings/XML, temporary-search independence, global arguments, template non-mutation and whole-batch rejection. Multi-file regressions explicitly cover mixed FULL/PARTIAL/EMPTY files, several groups per file, cross-file duplicate names, directory boundaries and root/directory planner parity. Native process-handler tests distinguish successful Flutter-style destruction, ordinary success, failure and explicit Stop with exit code zero.
 
 The separate `tools/sandbox-smoke` plugin opts in only on `test_explorer_filtered_smoke`. Its safe fixture has A/B plus C/D that deliberately fail if run. Real sandbox executions using the installed official runners verified A/B ran, C/D did not, Flutter's global dart-define reached the test body, each runner used one execution and the source bytes were unchanged. This passed first with simple A/B names and then with punctuation, quotes, spaces, Cyrillic and emoji. Backslash/control-character escaping is covered by unit tests; the pinned Flutter name extractor does not recognize raw strings as individual targets. Reports and captured native outputs are under `build/test_explorer_filtered_smoke/`. No application acceptance/integration tests were launched.
+
+The multi-file harness separately opts in on `test_explorer_multifile_smoke`. After the cancellation fix, actual native lifecycle events confirmed exactly two non-overlapping Flutter sessions: filtered file A, then unfiltered file B; excluded file C never launched. Test 1 and tests 3/4 executed with the global define; hidden test 2 and file C's test body did not execute. All three source files remained byte-for-byte unchanged. Root and directory resolved the identical plan. Evidence: `build/test_explorer_multifile_smoke/multifile-result.txt` (`SUCCESS`) and `multifile-output.txt`; `before-fix-progress.txt` records the original first-file-only failure.

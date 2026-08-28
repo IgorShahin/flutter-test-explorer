@@ -14,7 +14,10 @@ data class TestExecutionPlan(
     val scopeState: ExecutionScopeState? = null,
 )
 
-/** FULL uses native targets; PARTIAL uses one exact-name execution per affected file. */
+/** Run All/directory/root orchestrate file plans, not a cross-entrypoint name target.
+ * Each file independently uses native FILE for FULL, one exact filter for PARTIAL, or is
+ * omitted for EMPTY. Several groups in a file still produce only one file execution.
+ */
 class TestExecutionPlanner {
     private val resolver = ExecutionScopeResolver()
 
