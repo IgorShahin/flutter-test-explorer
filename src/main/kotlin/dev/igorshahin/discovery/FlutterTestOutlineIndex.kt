@@ -24,10 +24,13 @@ import com.jetbrains.lang.dart.analyzer.DartAnalysisServerService
 internal class FlutterTestOutlineIndex(
     private val project: Project,
     private val changed: (String?) -> Unit,
+    private val outlineRequestOverride: ((String) -> Unit)?,
 ) : Disposable {
+    constructor(project: Project, changed: (String?) -> Unit) : this(project, changed, null)
     private data class Snapshot(val outline: AnalyzerOutline, val sourceDigest: String, val revision: Long)
     private val snapshots = ConcurrentHashMap<String, Snapshot>()
     private val awaitingAnalysis = ConcurrentHashMap.newKeySet<String>()
+    private val requestedSourceDigests = ConcurrentHashMap<String, String>()
     private val listeners = mutableMapOf<String, FlutterOutlineListener>()
     @Volatile private var disposed = false
     @Volatile private var waitingForConnection = false
@@ -62,6 +65,7 @@ internal class FlutterTestOutlineIndex(
             server.removeOutlineListener(server.analysisService.getLocalFileUri(path), listeners.remove(path)!!)
             snapshots.remove(path)
             awaitingAnalysis.remove(path)
+            requestedSourceDigests.remove(path)
         }
         reconnectPending = false
         files.forEach { file ->
@@ -101,6 +105,7 @@ internal class FlutterTestOutlineIndex(
     internal fun recordOutline(file: PsiFile, outline: AnalyzerOutline) {
         val path = file.virtualFile.path
         val digest = sourceDigest(file)
+        requestedSourceDigests.remove(path)
         val previous = snapshots[path]
         if (previous?.outline != outline || previous.sourceDigest != digest) {
             snapshots[path] = Snapshot(outline, digest, revisionCounter.incrementAndGet())
@@ -121,7 +126,11 @@ internal class FlutterTestOutlineIndex(
             // PsiFileImpl.clearCaches() increments modificationStamp even when no source changed.
             // The analyzer does not resend outlines for a PSI-only invalidation. Bind snapshots to
             // source contents instead; also reject same-length unsaved edits (length alone is unsafe).
-            if (snapshot.sourceDigest != sourceDigest(file)) return pending(path, "source changed")
+            val currentDigest = sourceDigest(file)
+            if (snapshot.sourceDigest != currentDigest) {
+                requestFreshOutline(path, currentDigest)
+                return pending(path, "source changed")
+            }
             snapshot.outline
         }
         if (file.textLength != outline.length) {
@@ -139,6 +148,32 @@ internal class FlutterTestOutlineIndex(
         return emptyMap()
     }
 
+    /** Re-subscribe one stale source so the official Flutter analysis service sends its current
+     * outline even when an editor update was coalesced without a notification. This is a targeted
+     * analyzer request, not a project rescan, and at most one request is made per source digest. */
+    @Synchronized
+    private fun requestFreshOutline(path: String, digest: String) {
+        if (disposed || requestedSourceDigests.put(path, digest) == digest) return
+        outlineRequestOverride?.let { request ->
+            request(path)
+            return
+        }
+        val listener = listeners[path]
+        val server = FlutterDartAnalysisServer.getInstance(project)
+        if (listener == null || !server.isServerConnected) {
+            requestedSourceDigests.remove(path, digest)
+            return
+        }
+        try {
+            server.removeOutlineListener(server.analysisService.getLocalFileUri(path), listener)
+            server.addOutlineListener(FileUtil.toSystemDependentName(path), listener)
+            LOG.debug("Test Explorer requested a fresh analyzer outline for $path")
+        } catch (error: RuntimeException) {
+            requestedSourceDigests.remove(path, digest)
+            LOG.warn("Unable to request a fresh Dart/Flutter outline for $path", error)
+        }
+    }
+
     @Synchronized
     override fun dispose() {
         disposed = true
@@ -150,12 +185,14 @@ internal class FlutterTestOutlineIndex(
         listeners.clear()
         snapshots.clear()
         awaitingAnalysis.clear()
+        requestedSourceDigests.clear()
     }
 
     companion object {
         private val LOG = com.intellij.openapi.diagnostic.Logger.getInstance(FlutterTestOutlineIndex::class.java)
         private fun sourceDigest(file: PsiFile): String = HexFormat.of().formatHex(
-            MessageDigest.getInstance("SHA-256").digest(file.text.toByteArray(Charsets.UTF_8)))
+            MessageDigest.getInstance("SHA-256").digest((com.intellij.openapi.fileEditor.FileDocumentManager.getInstance()
+                .getCachedDocument(file.virtualFile)?.immutableCharSequence?.toString() ?: file.text).toByteArray(Charsets.UTF_8)))
         private fun decodeOutline(outline: Any): AnalyzerOutline =
             AnalyzerOutline.fromJson(outline.javaClass.getMethod("toJson").invoke(outline) as JsonObject)
 

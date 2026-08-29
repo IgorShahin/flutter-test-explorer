@@ -24,7 +24,7 @@ class TestExecutionPlanner {
     fun plan(complete: ExplorerNode, selectedId: String, excluded: Set<String>): TestExecutionPlan {
         val scope = resolver.resolve(complete, selectedId, excluded)
         val selected = scope.selected
-            ?: return TestExecutionPlan(error = "This test no longer exists. Refresh the explorer.")
+            ?: return TestExecutionPlan(error = "The selected test was renamed, removed or is no longer runnable. Select its current node.")
         if (scope.state == ExecutionScopeState.EMPTY) return TestExecutionPlan(
             error = "No visible tests to run", scopeState = scope.state)
         val allByFile = TestVisibility.leaves(complete).groupBy { it.location?.filePath }

@@ -1,6 +1,6 @@
 # Development-only native sandbox checks
 
-This is a separate plugin, not a production source set. It only acts on three explicitly named synthetic projects and writes its reports there. `test_explorer_smoke` checks UI/discovery without running tests. **`test_explorer_filtered_smoke` starts real native Flutter and Dart executions; `test_explorer_multifile_smoke` starts real sequential Flutter file executions.** All use harmless fixture tests. Do not install it into your regular IDE or give a real project any of these names. Fixture names are local to the harness, not runtime discovery rules.
+This is a separate plugin, not a production source set. It only acts on four explicitly named synthetic projects and writes its reports there. `test_explorer_smoke` checks UI/discovery without running tests. **`test_explorer_filtered_smoke` starts real native Flutter and Dart executions; `test_explorer_multifile_smoke` starts real sequential Flutter file executions; `test_explorer_edit_smoke` intentionally edits fixture documents and launches tests through the real tree actions.** All use harmless fixture tests. Do not install it into your regular IDE or give a real project any of these names. Fixture names are local to the harness, not runtime discovery rules.
 
 1. Build the main plugin with `./gradlew test buildPlugin`.
 2. Copy `project/` into `build/test_explorer_smoke`. Run `flutter pub get --offline` there (or ordinary pub get if dependencies are not cached).
@@ -11,7 +11,7 @@ From the repository root:
 
 ```sh
 mkdir -p build/sandbox-smoke-classes/META-INF "$SMOKE_PLUGIN/lib"
-javac --release 21 -cp "$IDEA_SDK/lib/*:.intellijPlatform/sandbox/flutter-test-explorer/IU-2025.3.5/plugins/flutter-test-explorer/lib/*:.intellijPlatform/sandbox/flutter-test-explorer/IU-2025.3.5/plugins/flutter-intellij/lib/*" -d build/sandbox-smoke-classes tools/sandbox-smoke/SmokeStartup.java tools/sandbox-smoke/FilteredExecutionSmoke.java tools/sandbox-smoke/MultiFileExecutionSmoke.java
+javac --release 21 -cp "$IDEA_SDK/lib/*:.intellijPlatform/sandbox/flutter-test-explorer/IU-2025.3.5/plugins/flutter-test-explorer/lib/*:.intellijPlatform/sandbox/flutter-test-explorer/IU-2025.3.5/plugins/flutter-intellij/lib/*" -d build/sandbox-smoke-classes tools/sandbox-smoke/SmokeStartup.java tools/sandbox-smoke/FilteredExecutionSmoke.java tools/sandbox-smoke/MultiFileExecutionSmoke.java tools/sandbox-smoke/EditRunSmoke.java
 cp tools/sandbox-smoke/plugin.xml build/sandbox-smoke-classes/META-INF/plugin.xml
 jar --create --file "$SMOKE_PLUGIN/lib/smoke.jar" -C build/sandbox-smoke-classes .
 ./gradlew runIde -PtestExplorerDebug --args="$PWD/build/test_explorer_smoke"
@@ -32,5 +32,9 @@ Wait for `filtered-execution-result.txt` ending in `SUCCESS`; inspect `flutter-o
 Copy `multifile-project/` to `build/test_explorer_multifile_smoke`, resolve dependencies and configure the SDK/content root as above. Launch with `./gradlew runIde -PtestExplorerDebug --args="$PWD/build/test_explorer_multifile_smoke"`. The fixture has a PARTIAL file A (test 1 enabled, test 2 excluded), FULL file B (tests 3/4 enabled) and EMPTY file C. It invokes the actual production Run All service on the root, verifies the directory resolves the identical plan, and checks execution lifecycle events: A must finish before B starts. It inspects the actual native configuration fields (A filtered, B unfiltered), global defines, completed output, absence of hidden test/file bodies, and unchanged source bytes. Read `multifile-result.txt` and `multifile-output.txt` for the result.
 
 Run `prepareSandbox -PtestExplorerDebug` before installing this harness: Gradle may remove non-dependency plugins when preparing a changed sandbox. If you change production code, rebuild first and then reinstall the development harness. An up-to-date `runIde` retains it.
+
+## Edit → immediate Run check
+
+Copy `edit-project/` to `build/test_explorer_edit_smoke`, resolve dependencies and configure the SDK/content root as above. Launch with `./gradlew runIde -PtestExplorerDebug --args="$PWD/build/test_explorer_edit_smoke"`. This harness deliberately changes the fixture's actual editor documents. It waits for startup synchronization, makes a 40-edit unsaved burst and invokes the tree's Run action immediately without saving, committing or refreshing. It also edits a queued file during Run All and performs a final unsaved rename without any Run action. `edit-run-result.txt` must end with `SUCCESS`; inspect `edit-run-output.txt` and the per-file discovery metrics in `idea.log`. All writes are scheduled in a non-modal write-safe context. Before repeating, restore **only these two fixture Dart files** from `edit-project/test/`; the previous run intentionally leaves them edited. Never use real project sources for this check.
 
 After verification, stop sandbox and move the `test-explorer-smoke` plugin directory outside `plugins` to disable it. Keep the report/images for inspection. The main distribution contains only `flutter-test-explorer` and never the smoke plugin.

@@ -136,6 +136,7 @@ internal class DartTestDiscovery(
         val calls = PsiTreeUtil.findChildrenOfType(file, DartCallExpression::class.java)
             .sortedBy { it.textOffset }
         if (calls.isEmpty()) return null
+        val sourceStamp = TestSourceStamp.current(virtualFile)
 
         // One classification/resolve per call, even inside deeply nested groups. Read-action local PSI only.
         val kinds = calls.associateWith {
@@ -156,7 +157,7 @@ internal class DartTestDiscovery(
             call to MutableTestItem(
                 kind = kind,
                 name = name,
-                location = SourceLocation(virtualFile.path, call.textOffset, file.modificationStamp),
+                location = SourceLocation(virtualFile.path, call.textOffset, sourceStamp),
                 runnable = staticName && runnabilityValidator.isRunnable(call, name),
                 nameIsStatic = staticName,
                 runtimeNameKnown = staticName && nameResolver.isRuntimeNameKnown(firstArgument),
@@ -175,7 +176,7 @@ internal class DartTestDiscovery(
         if (runnableRoots.isEmpty()) return null
         return DartTestFile(
             relativePath = relativePath,
-            location = SourceLocation(virtualFile.path, 0, file.modificationStamp),
+            location = SourceLocation(virtualFile.path, 0, sourceStamp),
             children = runnableRoots,
         )
     }

@@ -15,69 +15,104 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import dev.igorshahin.model.ExplorerNode
+import dev.igorshahin.discovery.TestSourceStamp
+import dev.igorshahin.filter.TestVisibility
 import dev.igorshahin.settings.TestExplorerSettings
 import io.flutter.FlutterUtils
 
 /** All scopes share this adapter and the same project arguments. Multi-file runs are sequential
  * official runner sessions, not shell processes; the queue stops on failure or cancellation.
  */
-class TestExecutionService(private val project: Project, private val parent: Disposable) {
+class TestExecutionService @JvmOverloads constructor(private val project: Project, private val parent: Disposable,
+                                                    private val refresher: TestModelRefresher? = null) {
     private val planner = TestExecutionPlanner()
     private val factory = TestConfigurationFactory(project)
     private val pending = ArrayDeque<Pair<ExplorerNode, RunnerAndConfigurationSettings>>()
     private var active: RunnerAndConfigurationSettings? = null
+    private var activePath: String? = null
+    private data class Request(val scope: TestRunScope, val excluded: Set<String>, val arguments: String,
+                               var model: ExplorerNode, val completedFiles: MutableSet<String> = mutableSetOf())
+    private var request: Request? = null
     private var preparing = false
     private var disposed = false
 
     init {
-        com.intellij.openapi.util.Disposer.register(parent) { disposed = true; pending.clear() }
+        com.intellij.openapi.util.Disposer.register(parent) { disposed = true; pending.clear(); request = null }
         project.messageBus.connect(parent).subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
             override fun processTerminated(executorId: String, env: ExecutionEnvironment, handler: ProcessHandler, exitCode: Int) {
                 if (active == null || env.runnerAndConfigurationSettings !== active) return
                 ApplicationManager.getApplication().invokeLater {
+                    val completedPath = activePath
                     active = null
+                    activePath = null
                     if (disposed) return@invokeLater
                     if (!canContinueBatch(handler, exitCode)) {
                         if (pending.isNotEmpty()) notifyError("Test run stopped or failed. Remaining files were not started.")
                         pending.clear()
-                    } else startNext()
+                        request = null
+                    } else {
+                        completedPath?.let { request?.completedFiles?.add(it) }
+                        startNext()
+                    }
                 }
             }
             override fun processNotStarted(executorId: String, env: ExecutionEnvironment) {
                 if (active == null || env.runnerAndConfigurationSettings !== active) return
                 ApplicationManager.getApplication().invokeLater {
                     active = null
+                    activePath = null
                     pending.clear()
+                    request = null
                 }
             }
         })
     }
 
     fun run(complete: ExplorerNode, selectedId: String) {
-        if (active != null || preparing) {
+        if (request != null || active != null || preparing) {
             notifyError("A Test Explorer run is already active. Wait for it to finish or stop it in the Run window.")
             return
         }
         val settings = project.getService(TestExplorerSettings::class.java)
-        val plan = planner.plan(complete, selectedId, settings.excludedNodeIds)
-        if (plan.error != null) { notifyError(plan.error); return }
-        val arguments = settings.globalArguments
+        val selected = TestVisibility.find(complete, selectedId)
+        if (selected == null) { notifyError("The selected test no longer exists."); return }
+        request = Request(TestRunScope.from(selected), settings.excludedNodeIds, settings.globalArguments, complete)
+        prepareLatest()
+    }
+
+    private fun prepareLatest() {
+        val current = request ?: return
+        pending.clear()
         preparing = true
+        val refresh = refresher
+        if (refresh == null) prepare(current, current.model) else refresh.ensureCurrent(current.scope) { result ->
+            if (disposed || request !== current) return@ensureCurrent
+            result.fold(onSuccess = { prepare(current, it) }, onFailure = { fail(it) })
+        }
+    }
+
+    private fun prepare(current: Request, model: ExplorerNode) {
+        current.model = model
+        // Re-resolve the stable ID in the CURRENT tree; never fall back to a parent/old offset.
+        val plan = planner.plan(model, current.scope.selectedId, current.excluded)
+        if (plan.error != null) { fail(IllegalStateException(plan.error)); return }
+        val targets = plan.targets.filter { it.target.fileOrDirectoryPath !in current.completedFiles }
         ReadAction.nonBlocking<Result<List<Pair<ExplorerNode, RunnerAndConfigurationSettings>>>> {
             // Validate the ENTIRE batch before starting anything, avoiding partial accidental runs.
             try {
-                Result.success(plan.targets.map { execution ->
+                Result.success(targets.map { execution ->
                     val node = execution.source
                     val file = checkedSource(node)
                     val psi = PsiManager.getInstance(project).findFile(file)
-                        ?: error("Test source no longer exists. Refresh the explorer.")
+                        ?: throw SourceChanged()
                     val config = factory.create(execution.target, node.label,
-                        FlutterUtils.isInFlutterProject(project, psi), arguments, execution.nameFilter)
+                        FlutterUtils.isInFlutterProject(project, psi), current.arguments, execution.nameFilter)
                     config.configuration.checkConfiguration()
                     node to config
                 })
@@ -92,15 +127,17 @@ class TestExecutionService(private val project: Project, private val parent: Dis
             }
         }
             .inSmartMode(project)
+            .withDocumentsCommitted(project)
             .expireWith(parent)
-            .finishOnUiThread(ModalityState.any()) { result ->
+            // startNext saves the current document: use a write-safe modality, never "any".
+            .finishOnUiThread(ModalityState.nonModal()) { result ->
                 preparing = false
-                if (!disposed) {
+                if (!disposed && request === current) {
                     result.fold(onSuccess = { configurations ->
                         pending.addAll(configurations)
                         startNext()
                     }, onFailure = { error ->
-                        notifyError(error.message ?: "The IDE cannot run this test configuration.")
+                        if (error is SourceChanged && refresher != null) prepareLatest() else fail(error)
                     })
                 }
             }
@@ -109,8 +146,10 @@ class TestExecutionService(private val project: Project, private val parent: Dis
                 ApplicationManager.getApplication().invokeLater {
                     preparing = false
                     pending.clear()
-                    if (!disposed && error !is ProcessCanceledException && error !is java.util.concurrent.CancellationException)
-                        notifyError(error.message ?: "The IDE cannot run this test configuration.")
+                    if (!disposed && request === current) {
+                        if (error is ProcessCanceledException || error is java.util.concurrent.CancellationException) prepareLatest()
+                        else fail(error)
+                    }
                 }
             }
     }
@@ -118,30 +157,50 @@ class TestExecutionService(private val project: Project, private val parent: Dis
     private fun checkedSource(node: ExplorerNode): com.intellij.openapi.vfs.VirtualFile {
         val location = requireNotNull(node.location)
         val file = LocalFileSystem.getInstance().findFileByPath(location.filePath)
-            ?: error("Test source no longer exists. Refresh the explorer.")
-        val psi = PsiManager.getInstance(project).findFile(file)
-        check(file.isValid && (location.modificationStamp == null || psi?.modificationStamp == location.modificationStamp)) {
-            "Test source changed since discovery. Refresh the explorer before running."
-        }
+            ?: throw SourceChanged()
+        if (!file.isValid || (location.modificationStamp != null && TestSourceStamp.current(file) != location.modificationStamp))
+            throw SourceChanged()
         return file
     }
 
     private fun startNext() {
-        if (disposed || pending.isEmpty()) return
+        if (disposed) return
+        if (pending.isEmpty()) { request = null; return }
         val (node, config) = pending.removeFirst()
         try {
+            val file = checkedSource(node)
+            // Native runners execute files on disk. Save only this current target's document,
+            // as a normal Run action does; discovery itself never saves/rewrites source.
+            val documents = FileDocumentManager.getInstance()
+            documents.getCachedDocument(file)?.let { document ->
+                documents.saveDocument(document)
+                check(!documents.isDocumentUnsaved(document)) { "Cannot save the current test source. Nothing was started." }
+            }
             checkedSource(node)
-        } catch (error: IllegalStateException) {
+        } catch (error: SourceChanged) {
             pending.clear()
-            notifyError(error.message.orEmpty())
+            if (refresher != null) prepareLatest() else fail(error)
+            return
+        } catch (error: Exception) {
+            fail(error)
             return
         }
         active = config
+        activePath = node.location?.filePath
         RunManager.getInstance(project).apply {
             setTemporaryConfiguration(config)
             selectedConfiguration = config
         }
         ProgramRunnerUtil.executeConfiguration(config, DefaultRunExecutor.getRunExecutorInstance())
+    }
+
+    private class SourceChanged : IllegalStateException("The test source changed while preparing its run.")
+
+    private fun fail(error: Throwable) {
+        preparing = false
+        pending.clear()
+        request = null
+        if (!disposed) notifyError(error.message ?: "The IDE cannot run this test configuration.")
     }
 
     private fun notifyError(content: String) {

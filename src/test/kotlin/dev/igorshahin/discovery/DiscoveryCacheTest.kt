@@ -62,6 +62,40 @@ class DiscoveryCacheTest {
         assertFalse(outlined.state.files[path]!!.awaitingAnalysis)
     }
 
+    @Test fun `pending analyzer preserves the old branch explicitly pending then publishes current result`() {
+        val first = cache.update(DiscoveryCacheState(), candidates, DiscoveryChanges(rescan = true))
+        val path = candidates.keys.first()
+        val old = first.state.files.getValue(path).result
+        backend.stamps[path] = 2
+        backend.empty = true
+        backend.pending = true
+        val waiting = cache.update(first.state, candidates, DiscoveryChanges(paths = setOf(path)))
+        assertSame(old, waiting.replacements[candidates[path]])
+        assertTrue(waiting.state.files.getValue(path).awaitingAnalysis)
+        assertEquals(1, waiting.metrics.analyzed)
+        assertSame(first.state.files[candidates.keys.last()], waiting.state.files[candidates.keys.last()])
+        backend.revisions[path] = 2
+        backend.pending = false // settled analysis: the test was deleted, so now prune the branch
+        val settled = cache.update(waiting.state, candidates, DiscoveryChanges(outlines = setOf(path)))
+        assertNull(settled.replacements[candidates[path]])
+        assertFalse(settled.state.files.getValue(path).awaitingAnalysis)
+    }
+
+    @Test fun `burst of document changes coalesces into one file rediscovery without full rescan`() {
+        val first = cache.update(DiscoveryCacheState(), candidates, DiscoveryChanges(rescan = true))
+        val path = candidates.keys.first()
+        var changes = DiscoveryChanges()
+        repeat(40) {
+            backend.stamps[path] = it + 2L
+            changes = changes.merge(DiscoveryChanges(paths = setOf(path)))
+        }
+        val update = cache.update(first.state, candidates, changes)
+        assertEquals(1, update.metrics.analyzed)
+        assertEquals(1L, update.state.fullRefreshes)
+        assertFalse(changes.rescan)
+        assertEquals(41L, update.state.files.getValue(path).version.sourceStamp)
+    }
+
     @Test fun `helper changes invalidate only dependent tests never helper PSI`() {
         val affected = candidates.keys.take(2)
         affected.forEach { backend.imports[it] = setOf("/p/lib/helper.dart", "/p/lib/transitive.dart") }
