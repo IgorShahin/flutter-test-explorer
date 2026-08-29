@@ -2,9 +2,15 @@
 
 Native IntelliJ **Tests** tool window for runnable Dart/Flutter tests.
 
+![Flutter Test Explorer overview](docs/marketplace/01-overview.png)
+
+| Runnable discovery | Run and filter |
+| --- | --- |
+| ![Strict runnable discovery](docs/marketplace/02-runnable-discovery.png) | ![Run actions and filtering](docs/marketplace/03-run-and-filter.png) |
+
 ## Using the panel
 
-Open **View → Tool Windows → Tests** in a configured Dart/Flutter project. `Tests` is a standard declarative IntelliJ Tool Window: use its native menu to move it, pin/unpin it or remove it from the sidebar. Restore it through **More Tool Windows → Tests**. In the New UI, windows already on the sidebar are normally omitted from More Tool Windows. The window remains available during indexing; discovery waits for smart mode. Its public Platform `AllIcons.Nodes.TestGroup` icon is separate from the unchanged Run action icons.
+Open **View → Tool Windows → Tests** in a configured Dart/Flutter project. `Tests` is a standard declarative IntelliJ Tool Window: use its native menu to move it, pin/unpin it or remove it from the sidebar. Restore it through **More Tool Windows → Tests**. In the New UI, windows already on the sidebar are normally omitted from More Tool Windows. The window remains available during indexing; discovery waits for smart mode. Its adaptive JetBrains-style test icon is separate from the unchanged Run action icons.
 
 The toolbar provides:
 
