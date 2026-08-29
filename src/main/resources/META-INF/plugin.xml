@@ -13,8 +13,65 @@
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-description -->
     <description><![CDATA[
-        A dedicated Tests tool window for discovering Dart and Flutter tests.
-        ]]></description>
+        <p>
+            Explore and run Dart and Flutter tests from a native <b>Tests</b> tool window in IntelliJ IDEA.
+        </p>
+        <p>
+            Flutter Test Explorer builds a focused tree of the tests that the installed Dart and Flutter
+            infrastructure can actually launch. Helpers, unsupported dynamic constructs, and structural branches
+            without runnable tests stay out of the way.
+        </p>
+
+        <h3>Features</h3>
+        <ul>
+            <li>
+                <b>Accurate test discovery:</b> finds runnable tests in <code>test/</code> and
+                <code>integration_test/</code>, including nested packages, directories, groups, and nested groups.
+            </li>
+            <li>
+                <b>Run at any level:</b> start an individual test, group, file, directory, or the complete visible
+                scope using Dart and Flutter run configurations.
+            </li>
+            <li>
+                <b>Precise execution scope:</b> persistent visibility checkboxes control what may run, while text
+                and exclusion search make large suites easier to navigate. Partially included files use exact
+                per-file test filters.
+            </li>
+            <li>
+                <b>Automatic updates:</b> edits, including unsaved editor changes, incrementally rediscover only the
+                affected test file. Manual refresh is not required for normal work.
+            </li>
+            <li>
+                <b>Native IDE workflow:</b> use inline Run actions, Run Selected, Run All in Visible Scope,
+                keyboard shortcuts, source navigation, and the standard IntelliJ Run tool window.
+            </li>
+        </ul>
+
+        <p>
+            Run All and directory runs create a safe execution plan per test entrypoint: fully visible files use
+            normal file execution, partially visible files use filtered execution, and excluded files are skipped.
+        </p>
+
+        <p>
+            <b>Requirements:</b> the Dart and Flutter plugins, a configured SDK, and a successfully analyzed project.
+            Tests that cannot be represented as reliable IDE run targets are intentionally omitted. Test results are
+            displayed in IntelliJ's standard Run tool windows.
+        </p>
+
+        <h3>Preview</h3>
+        <p>
+            <img src="https://raw.githubusercontent.com/IgorShahin/flutter-test-explorer/main/docs/marketplace/01-overview.png"
+                 width="800" alt="Flutter Test Explorer overview"/>
+        </p>
+        <p>
+            <img src="https://raw.githubusercontent.com/IgorShahin/flutter-test-explorer/main/docs/marketplace/02-runnable-discovery.png"
+                 width="800" alt="Strict runnable Dart and Flutter test discovery"/>
+        </p>
+        <p>
+            <img src="https://raw.githubusercontent.com/IgorShahin/flutter-test-explorer/main/docs/marketplace/03-run-and-filter.png"
+                 width="800" alt="Run actions and test filtering"/>
+        </p>
+    ]]></description>
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
