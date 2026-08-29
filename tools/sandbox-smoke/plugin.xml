@@ -10,5 +10,6 @@
         <postStartupActivity implementation="smoke.SmokeStartup"/>
         <postStartupActivity implementation="smoke.FilteredExecutionSmoke"/>
         <postStartupActivity implementation="smoke.MultiFileExecutionSmoke"/>
+        <postStartupActivity implementation="smoke.EditRunSmoke"/>
     </extensions>
 </idea-plugin>

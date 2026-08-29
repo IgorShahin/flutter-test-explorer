@@ -89,9 +89,13 @@ internal class DiscoveryCache(private val backend: DiscoveryBackend) {
             analyzed++
             val dependencies = if (old != null && old.version.sourceStamp == version.sourceStamp &&
                 !changes.invalidateAll && path !in changedDependencies) old.dependencies else backend.dependencies(path)
-            files[path] = CachedTestFile(relative, version, result, dependencies, backend.awaitingAnalysis(path))
+            val awaiting = backend.awaitingAnalysis(path)
+            // Keep the last branch while the official analyzer catches up, so selection/expansion
+            // do not flicker away. It is explicitly pending and cannot pass the run barrier.
+            val displayed = if (awaiting) old?.result ?: result else result
+            files[path] = CachedTestFile(relative, version, displayed, dependencies, awaiting)
             dependencies.forEach { dependents[it] = dependents[it].orEmpty() + path }
-            replacements[relative] = result
+            replacements[relative] = displayed
         }
         val state = DiscoveryCacheState(files, dependents,
             previous.fullRefreshes + if (changes.rescan) 1 else 0,

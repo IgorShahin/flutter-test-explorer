@@ -18,6 +18,8 @@ Runnable files, groups and tests also have a permanent **Run button directly bef
 
 The search field temporarily narrows the visible tree by path/group/name; words are ANDed and `!word` or `-word` excludes a term. Search does not change saved visibility **or execution scope**: Run All runs the configured checkbox scope, and Run Selected uses the selected node's configured scope, not the temporary search results.
 
+Editing a test (including unsaved editor changes) automatically rediscovers that file after a 350 ms debounce. Run remains available while discovery/indexing is pending: it waits for current discovery of its scope, resolves the selected ID in the new model and only then prepares the native configuration. An edit that races with preparation or changes a queued file triggers another targeted update, not a project Refresh or a repeat of completed files. Unchanged IDs, visibility and tree branches are preserved. Refresh remains the explicit force-full-refresh action. See [edit → Run verification](docs/edit-and-run.md).
+
 Example global arguments (separate options with spaces or newlines):
 
 ```text

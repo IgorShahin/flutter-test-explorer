@@ -15,7 +15,6 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.roots.ModuleRootListener
 import com.intellij.openapi.roots.ModuleRootEvent
 import com.intellij.openapi.editor.EditorFactory
@@ -37,6 +36,7 @@ import dev.igorshahin.MyMessageBundle
 import dev.igorshahin.discovery.*
 import dev.igorshahin.filter.TestVisibility
 import dev.igorshahin.execution.TestExecutionService
+import dev.igorshahin.execution.TestModelRefresher
 import dev.igorshahin.model.ExplorerNode
 import dev.igorshahin.model.ExplorerNodeKind
 import dev.igorshahin.model.SourceLocation
@@ -74,14 +74,15 @@ class TestExplorerPanel(
     private var cacheState = DiscoveryCacheState()
     private val treeFilter = TestExplorerFilter()
     private val navigator = TestSourceNavigator(project)
-    private val execution = TestExecutionService(project, this)
+    private val execution = TestExecutionService(project, this,
+        TestModelRefresher { scope, ready -> runBarrier.ensureCurrent(scope, ready) })
     private val settings = project.getService(TestExplorerSettings::class.java)
     private val projectLabel = project.basePath
         ?.trimEnd('/')
         ?.substringAfterLast('/')
         ?.takeIf(String::isNotBlank)
         ?: project.name
-    private val tree = InlineRunTree({ !disposed && discoveryPromise == null && !DumbService.isDumb(project) }, ::runNode).apply {
+    private val tree = InlineRunTree({ !disposed && completeModel != null }, ::runNode).apply {
         isRootVisible = true
         showsRootHandles = true
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
@@ -93,7 +94,7 @@ class TestExplorerPanel(
         true,
         this,
         this,
-    )
+    ).apply { setRestartTimerOnAdd(true) }
     private val filterField = SearchTextField(false).apply {
         textEditor.emptyText.text = MyMessageBundle.message("toolwindow.tests.filter.placeholder")
         textEditor.accessibleContext.accessibleName =
@@ -103,11 +104,16 @@ class TestExplorerPanel(
     private var discoveryPromise: CancellablePromise<DiscoveryBatch>? = null
     private var filterPromise: CancellablePromise<ExplorerNode>? = null
     private var pendingChanges: DiscoveryChanges? = null
+    private var runningChanges: DiscoveryChanges? = null
     private var completeModel: ExplorerNode? = null
     private var discoveryGeneration = 0L
     private var filterGeneration = 0L
     @Volatile
     private var disposed = false
+    private val runBarrier = RunDiscoveryBarrier(project, this, {
+        RunDiscoverySnapshot(cacheState, completeModel,
+            pendingChanges?.let { pending -> runningChanges?.merge(pending) ?: pending } ?: runningChanges)
+    }, backend::version, ::requestDiscovery)
 
     init {
         Disposer.register(this, outlines)
@@ -128,11 +134,11 @@ class TestExplorerPanel(
             }
         })
 
-        val runAction = action("Run Selected", AllIcons.Actions.Execute, { selectedNode()?.runnable == true }) {
+        val runAction = action("Run Selected", AllIcons.Actions.Execute, { selectedNode()?.runnable == true }, true) {
             runSelectedNode()
         }
         val actions = DefaultActionGroup(
-            action("Run All in Visible Scope", AllIcons.Actions.RunAll, { completeModel != null }) {
+            action("Run All in Visible Scope", AllIcons.Actions.RunAll, { completeModel != null }, true) {
                 completeModel?.let { runNode(it.id) }
             },
             runAction,
@@ -196,17 +202,23 @@ class TestExplorerPanel(
 
     private fun requestDiscovery(changes: DiscoveryChanges) {
         if (disposed) return
-        ApplicationManager.getApplication().invokeLater({
-            if (disposed) return@invokeLater
-            pendingChanges = pendingChanges?.merge(changes) ?: changes
-            refreshQueue.queue(Update.create(REFRESH_UPDATE_ID, ::refreshNow))
-        }, ModalityState.any())
+        val application = ApplicationManager.getApplication()
+        // Document events already run on EDT. Record dirtiness before a same-turn Run can fire.
+        if (application.isDispatchThread) enqueueDiscovery(changes)
+        else application.invokeLater({ if (!disposed) enqueueDiscovery(changes) }, ModalityState.any())
+    }
+
+    private fun enqueueDiscovery(changes: DiscoveryChanges) {
+        pendingChanges = pendingChanges?.merge(changes) ?: changes
+        runBarrier.changed()
+        refreshQueue.queue(Update.create(REFRESH_UPDATE_ID, ::refreshNow))
     }
 
     private fun refreshNow() {
         if (disposed || discoveryPromise != null) return
         val changes = pendingChanges ?: return
         pendingChanges = null
+        runningChanges = changes
         val previous = cacheState
         val previousModel = completeModel ?: ExplorerNode(ExplorerNodeKind.ROOT, projectLabel,
             project.basePath?.let { SourceLocation(it, 0) }, id = TestNodeId.ROOT)
@@ -227,10 +239,12 @@ class TestExplorerPanel(
             .finishOnUiThread(ModalityState.any()) { batch ->
                 if (generation != discoveryGeneration) return@finishOnUiThread
                 discoveryPromise = null
+                runningChanges = null
                 cacheState = batch.update.state
                 LOG.debug("Test Explorer discovery: ${batch.update.metrics}, totalMs=${batch.elapsedNanos / 1_000_000.0}")
                 completeModel = batch.model
                 showFilteredModel()
+                runBarrier.changed()
                 tree.setPaintBusy(false)
                 if (pendingChanges != null) refreshQueue.queue(Update.create(REFRESH_UPDATE_ID, ::refreshNow))
             }
@@ -239,11 +253,12 @@ class TestExplorerPanel(
     }
 
     private fun handleDiscoveryError(generation: Long, changes: DiscoveryChanges, error: Throwable) {
-        if (error is ProcessCanceledException || error is CancellationException) return
-        LOG.warn("Dart/Flutter test discovery failed", error)
+        val cancelled = error is ProcessCanceledException || error is CancellationException
+        if (!cancelled) LOG.warn("Dart/Flutter test discovery failed", error)
         ApplicationManager.getApplication().invokeLater({
             if (generation != discoveryGeneration || disposed) return@invokeLater
             discoveryPromise = null
+            runningChanges = null
             tree.setPaintBusy(false)
             // Keep the last good model, especially during indexing or transient analysis failures.
             if (completeModel == null) showMessage(
@@ -254,6 +269,8 @@ class TestExplorerPanel(
             )
             // Retry this transaction on the next external event/manual refresh, not in a tight loop.
             pendingChanges = pendingChanges?.merge(changes) ?: changes
+            if (cancelled) refreshQueue.queue(Update.create(REFRESH_UPDATE_ID, ::refreshNow))
+            else runBarrier.failed(error)
         }, ModalityState.any())
     }
 
@@ -339,15 +356,16 @@ class TestExplorerPanel(
     }
 
     private fun runNode(id: String) {
-        if (disposed || discoveryPromise != null || DumbService.isDumb(project)) return
+        if (disposed) return
         completeModel?.let { execution.run(it, id) }
     }
 
     private fun action(text: String, icon: javax.swing.Icon, enabled: () -> Boolean = { true },
+                       allowDuringDiscovery: Boolean = false,
                        perform: () -> Unit): AnAction = object : DumbAwareAction(text, text, icon) {
         override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
         override fun update(event: AnActionEvent) {
-            event.presentation.isEnabled = !disposed && discoveryPromise == null && enabled()
+            event.presentation.isEnabled = !disposed && (allowDuringDiscovery || discoveryPromise == null) && enabled()
         }
         override fun actionPerformed(event: AnActionEvent) = perform()
     }

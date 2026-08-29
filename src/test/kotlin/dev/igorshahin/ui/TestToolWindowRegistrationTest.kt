@@ -1,7 +1,7 @@
 package dev.igorshahin.ui
 
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.ToolWindowEP
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
@@ -14,10 +14,10 @@ class TestToolWindowRegistrationTest : BasePlatformTestCase() {
         assertTrue(extension.getToolWindowFactory(extension.pluginDescriptor).shouldBeAvailable(project))
     }
 
-    fun testPublicTestGroupIconIsUsed() {
+    fun testAdaptiveTestExplorerIconIsUsed() {
         val extension = ToolWindowEP.EP_NAME.extensionList.single { it.id == "Tests" }
-        assertEquals("AllIcons.Nodes.TestGroup", extension.icon)
-        val icon = AllIcons.Nodes.TestGroup
+        assertEquals("/icons/testExplorer.svg", extension.icon)
+        val icon = IconLoader.getIcon(extension.icon, TestExplorerToolWindowFactory::class.java)
         assertTrue(icon.iconWidth > 0 && icon.iconHeight > 0)
         // Headless Platform tests replace loaded icons with placeholders. Pixel rendering is
         // checked by the separate sandbox smoke plugin, never by shipping production code.

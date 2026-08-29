@@ -1,6 +1,5 @@
 package dev.igorshahin.discovery
 
-import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
@@ -122,5 +121,5 @@ internal class IndexedDiscoveryBackend(private val project: Project, private val
     override fun awaitingAnalysis(path: String): Boolean = path in flutterPaths && outlines.isAwaitingAnalysis(path)
 
     private fun sourceStamp(file: VirtualFile) =
-        FileDocumentManager.getInstance().getCachedDocument(file)?.modificationStamp ?: file.modificationStamp
+        TestSourceStamp.current(file)
 }

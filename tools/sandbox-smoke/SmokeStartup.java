@@ -77,7 +77,7 @@ public final class SmokeStartup implements StartupActivity.DumbAware {
         graphics.dispose();
         boolean visible = false;
         for (int x=0; x<image.getWidth(); x++) for (int y=0; y<image.getHeight(); y++) visible |= (image.getRGB(x,y) >>> 24) != 0;
-        require(visible, "real native TestGroup icon renders nontransparent pixels");
+        require(visible, "real native Flutter test icon renders nontransparent pixels");
         ImageIO.write(image, "png", output.resolve("tool-window-icon.png").toFile());
         window.hide();
         require(!window.isVisible(), "native hide");

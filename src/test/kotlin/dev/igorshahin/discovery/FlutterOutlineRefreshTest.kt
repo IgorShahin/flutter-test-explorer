@@ -28,7 +28,8 @@ class FlutterOutlineRefreshTest : BasePlatformTestCase() {
 
     fun testSameLengthUnsavedEditRejectsOldOutlineAndNewOutlineResumesDiscovery() {
         val file = myFixture.configureByText("sample_test.dart", "void main() { test('old!', () {}); }")
-        val index = FlutterTestOutlineIndex(project) {}
+        val outlineRequests = mutableListOf<String>()
+        val index = FlutterTestOutlineIndex(project, {}, outlineRequests::add)
         try {
             val outline = AnalyzerOutline(0, file.textLength, null, listOf(
                 AnalyzerOutline(file.text.indexOf("test("), 1, "UNIT_TEST_TEST", emptyList())))
@@ -40,6 +41,8 @@ class FlutterOutlineRefreshTest : BasePlatformTestCase() {
             PsiDocumentManager.getInstance(project).commitAllDocuments()
             assertTrue(index.testCalls(file).isEmpty())
             assertTrue(index.isAwaitingAnalysis(file.virtualFile.path))
+            assertTrue(index.testCalls(file).isEmpty())
+            assertEquals("One official outline request per edited source digest", listOf(file.virtualFile.path), outlineRequests)
             index.recordOutline(file, outline)
             assertTrue(index.revision(file.virtualFile.path) > revision)
             assertEquals(1, index.testCalls(file).size)

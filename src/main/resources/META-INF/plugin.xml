@@ -28,7 +28,7 @@
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Tests" factoryClass="dev.igorshahin.ui.TestExplorerToolWindowFactory"
-                    anchor="left" icon="AllIcons.Nodes.TestGroup"/>
+                    anchor="left" icon="/icons/testExplorer.svg"/>
         <notificationGroup id="Flutter Test Explorer" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 

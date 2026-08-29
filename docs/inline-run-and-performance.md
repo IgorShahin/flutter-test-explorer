@@ -12,6 +12,8 @@ Swing tree renderers are paint stamps, not live button children. The tree theref
 
 Toolbar Run All, Run Selected, context menu, Shift+F10 and inline Run all call the panel's `runNode(id)`, then `TestExecutionService.run(completeModel, id)`. UI code constructs no CLI commands or configurations. Persistent exclusions, global arguments, stale-target checks, FULL/PARTIAL/EMPTY scope resolution and the sequential run queue apply identically. PARTIAL groups/files use one exact-name native execution, described in [filtered execution](filtered-execution.md). All five existing toolbar actions remain. No inline directory action is added.
 
+Run actions stay available during discovery and smart-mode waits. `RunDiscoveryBarrier` coordinates with the existing per-file cache/queue, then the shared service re-resolves the ID against the current model. A late edit causes targeted rediscovery and re-planning, not a stale-source warning or a full Refresh. Details and sandbox evidence: [edit → Run](edit-and-run.md).
+
 ## 3. Review and measured bottlenecks
 
 Before this change, every relevant VFS event and outline notification queued `discoverProject()`: package-root lookup, test-root VFS walks, PSI discovery of every candidate, full immutable tree construction, and replacement of the complete Swing model. Filtering already avoided PSI, but recursively transformed and recreated the Swing tree on EDT. Nested calls also reclassified/resolved parent groups repeatedly. Expansion, selection and scrolling were lost on replacement.
@@ -34,7 +36,7 @@ Sandbox profiling also caught a proposed optimization that was slower: independe
 - One disposable editor document listener catches unsaved edits. One project-root listener handles SDK/module/root changes.
 - Flutter subscribes to the entire candidate set through the official analyzer. Preparing one cache miss never unsubscribes other files. Distinct outlines carry monotonic local revisions; a duplicate payload/stamp does not queue duplicate discovery. Analyzer reconnects resubscribe and invalidate stale results.
 - Dart-only files use reverse transitive import/export/part dependencies. The existing Dart indexes and URL resolver are consulted without helper PSI. Direct dependency results are themselves cached by source stamp. Missing relative imports remain tracked so later creation invalidates their importers.
-- `MergingUpdateQueue` coalesces discovery for 350 ms, search for 120 ms. Events arriving during discovery accumulate for the next batch; they do not cancel/restart it merely because another event arrived.
+- `MergingUpdateQueue` debounces discovery for 350 ms with restart-on-add, search for 120 ms. EDT document events mark pending paths synchronously, before an immediate Run can race past them. Events arriving during discovery accumulate for the next batch; they do not cancel/restart it merely because another event arrived.
 - `ReadAction.nonBlocking().inSmartMode(project).withDocumentsCommitted(project)` postpones index-dependent work without blocking EDT. The old model stays visible in Dumb Mode with a busy indicator. Only a successful batch reaches EDT; failures keep the last model and retry on a later event/Refresh. Both queues, listeners, promises and analyzer subscriptions are tied to panel disposal.
 
 ## 6. Reused indexes/APIs
