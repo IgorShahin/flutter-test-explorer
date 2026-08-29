@@ -1,4 +1,7 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
 
 plugins {
     id("org.jetbrains.kotlin.jvm")
@@ -31,5 +34,13 @@ tasks.named<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>("pr
 tasks.named<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask>("runIde") {
     if (providers.gradleProperty("testExplorerDebug").isPresent) {
         systemProperty("idea.log.debug.categories", "#dev.igorshahin")
+    }
+}
+
+// Keep CI failures actionable in the job log; the full HTML/XML report is also uploaded.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events(TestLogEvent.FAILED, TestLogEvent.SKIPPED)
+        exceptionFormat = TestExceptionFormat.FULL
     }
 }
