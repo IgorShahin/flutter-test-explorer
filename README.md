@@ -18,7 +18,7 @@ The toolbar provides:
 - **Run Selected**: selects an official test, widget test, group, nested group, file, or directory target. Also available from the context menu and **Shift+F10** while the tree is focused.
 - **Refresh Tests**: rediscovers tests. Analysis and indexing may need to finish first.
 - **Test Visibility** (funnel): persistent hierarchical checkboxes. Checking a parent includes all descendants; unchecking it excludes the subtree. Partial selection uses IntelliJ's native tri-state checkbox renderer.
-- **Global Run Arguments** (gear): project-specific additional arguments, applied to every run started by this panel.
+- **Global Run Arguments** (gear): opens the native **Settings → Tools → Flutter Test Explorer** page with a project-specific ordered table. Each row can be enabled, edited, removed or moved; disabled rows remain saved but are omitted from every run. A fresh project starts with an empty list—the plugin never inserts predefined arguments.
 
 Runnable files, groups and tests also have a permanent **Run button directly before the row name**. Click that button to run its target; clicking the name only selects the row. Double-click the name to navigate to source. The inline button, toolbar, context menu and Shift+F10 all use the same execution service and safety checks. Directories keep their toolbar/context-menu run action.
 
@@ -26,15 +26,7 @@ The search field temporarily narrows the visible tree by path/group/name; words 
 
 Editing a test (including unsaved editor changes) automatically rediscovers that file after a 350 ms debounce. Run remains available while discovery/indexing is pending: it waits for current discovery of its scope, resolves the selected ID in the new model and only then prepares the native configuration. An edit that races with preparation or changes a queued file triggers another targeted update, not a project Refresh or a repeat of completed files. Unchanged IDs, visibility and tree branches are preserved. Refresh remains the explicit force-full-refresh action. See [edit → Run verification](docs/edit-and-run.md).
 
-Example global arguments (separate options with spaces or newlines):
-
-```text
---dart-define=ENV=test
---dart-define=COUNTRY=ru
---timeout=30s
-```
-
-These are additional **test-runner** options, not a shell command. Flutter receives `TestFields.additionalArgs`; Dart receives `DartTestRunnerParameters.testRunnerOptions`. Use arguments appropriate to the selected runner. Flutter 95 splits its additional arguments on literal spaces without handling quotes: separators are normalized, but values containing whitespace are rejected before launching. For Dart defines with such values, use `--dart-define-from-file` with a path without spaces. Dart's native parser supports double-quoted values. Name/path target selectors are managed by the explorer because user-supplied selectors could broaden the scope. Existing user configurations and templates are not changed.
+Arguments are stored as ordered `{ value, enabled }` entries, not as a shell command. Each row is one logical CLI argument and only enabled values enter the execution request. At the final native boundary Flutter's string-only field receives reversible transport tokens that are expanded into separate `ProcessBuilder` argv elements; Dart receives a quote-aware representation through `DartTestRunnerParameters.testRunnerOptions`. Spaces, quotes and Unicode inside one logical value therefore stay inside that value. Name/path selectors remain managed by the explorer because user-supplied selectors could broaden the scope. Existing user configurations and templates are not changed. A legacy free-form value is migrated once with IntelliJ's quote-aware argument parser.
 
 ## Predictable execution with exclusions
 
@@ -60,7 +52,7 @@ Initial candidates use `FilenameIndex` for package roots, `FileTypeIndex` scoped
 
 Full candidate reconciliation is reserved for startup, explicit Refresh, SDK/root/package configuration changes, analyzer reconnection and structural changes that may introduce/remove package roots. A content edit or outline update does not search the project again. Explicit Refresh also bypasses cached results.
 
-Settings are stored per project in IntelliJ's workspace storage. IDs encode project-relative paths, node kind, enclosing group identities, name and duplicate occurrence; offsets are not persisted. Ordinary line insertions preserve selection. A rename/move is a new identity and is included by default. Stale exclusions are harmless and retained for files that return after branch changes. Identically named siblings are distinguished by occurrence; reordering indistinguishable duplicates may change their identity.
+Settings are stored per project in IntelliJ's workspace storage. Global arguments retain their order and enabled state across IDE restarts; duplicate values are preserved. IDs encode project-relative paths, node kind, enclosing group identities, name and duplicate occurrence; offsets are not persisted. Ordinary line insertions preserve selection. A rename/move is a new identity and is included by default. Stale exclusions are harmless and retained for files that return after branch changes. Identically named siblings are distinguished by occurrence; reordering indistinguishable duplicates may change their identity.
 
 ## Build and verification
 
@@ -72,6 +64,8 @@ Targets: **IntelliJ IDEA 2025.3.5**, **Dart 508.1.0**, **Flutter 95.0.0**.
 # Optional debug-only discovery/cache/filter/UI counters in sandbox idea.log:
 ./gradlew runIde -PtestExplorerDebug
 ```
+
+Debug logging also records the final additional argv submitted to each generated Dart/Flutter configuration as an ordered list. Disabled settings entries are absent from that log and from the native configuration.
 
 The installable ZIP is under `build/distributions/`. Install via **Settings → Plugins → gear → Install Plugin from Disk** and restart the IDE.
 

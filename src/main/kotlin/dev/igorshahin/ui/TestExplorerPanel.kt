@@ -20,6 +20,7 @@ import com.intellij.openapi.roots.ModuleRootEvent
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
@@ -44,6 +45,7 @@ import dev.igorshahin.model.TestExplorerFilter
 import dev.igorshahin.model.TestModelPatcher
 import dev.igorshahin.model.TestNodeId
 import dev.igorshahin.navigation.TestSourceNavigator
+import dev.igorshahin.settings.TestExplorerConfigurable
 import dev.igorshahin.settings.TestExplorerSettings
 import java.awt.BorderLayout
 import java.awt.event.InputEvent
@@ -155,8 +157,7 @@ class TestExplorerPanel(
                 }
             },
             action("Global Run Arguments", AllIcons.General.Settings) {
-                val dialog = TestArgumentsDialog(project, settings.globalArguments)
-                if (dialog.showAndGet()) settings.globalArguments = dialog.arguments
+                ShowSettingsUtil.getInstance().showSettingsDialog(project, TestExplorerConfigurable::class.java)
             },
         )
         val toolbar = ActionManager.getInstance().createActionToolbar("FlutterTestExplorer.Toolbar", actions, true)

@@ -14,6 +14,7 @@ import com.intellij.openapi.util.Key;
 import com.intellij.openapi.vfs.*;
 import com.intellij.openapi.wm.*;
 import dev.igorshahin.model.ExplorerNode;
+import dev.igorshahin.settings.TestArgument;
 import dev.igorshahin.settings.TestExplorerSettings;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -104,7 +105,8 @@ public final class EditRunSmoke implements StartupActivity.DumbAware {
                         if (edited == null || untouched == null || hidden == null) return;
                         hiddenId = node(hidden).getId();
                         project.getService(TestExplorerSettings.class).setExcludedNodeIds(Set.of(hiddenId));
-                        project.getService(TestExplorerSettings.class).setGlobalArguments("--timeout=30s");
+                        project.getService(TestExplorerSettings.class).setTestArguments(
+                            List.of(new TestArgument("--timeout=30s", true)));
                         oldOffset = node(edited).getLocation().getOffset();
                         tree.expandPath(new TreePath(untouched.getParent() instanceof DefaultMutableTreeNode parent ? parent.getPath() : untouched.getPath()));
                         tree.setSelectionPath(new TreePath(edited.getPath()));

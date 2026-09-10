@@ -63,7 +63,7 @@ Sandbox smoke check (2026-08-28, 21:58): five indexed candidates, four displayed
 
 Final automated verification: 48 tests passed; plugin build, structure and project-configuration verification passed. No real application acceptance tests were launched.
 
-Enable only development logs with `./gradlew runIde -PtestExplorerDebug`, or add `#dev.igorshahin` in IDEA's **Help → Diagnostic Tools → Debug Log Settings**. Normal production logs do not receive per-file/per-refresh messages. Debug output records candidate count, actual discovery calls, hits, invalidations, cumulative full/incremental batches, discovery and total batch duration, filter duration, visited Swing nodes and EDT patch duration. Successful-batch metrics do not include canceled read-action attempts; detailed debug lines reveal those retries.
+Enable only development logs with `./gradlew runIde -PtestExplorerDebug`, or add `#dev.igorshahin` in IDEA's **Help → Diagnostic Tools → Debug Log Settings**. Normal production logs do not receive per-file/per-refresh messages. Debug output records candidate count, actual discovery calls, hits, invalidations, cumulative full/incremental batches, discovery and total batch duration, filter duration, visited Swing nodes, EDT patch duration, and the ordered additional argv submitted to each generated native configuration. Disabled argument entries never reach that argv log. Successful-batch metrics do not include canceled read-action attempts; detailed debug lines reveal those retries.
 
 ## 9. Limits and verification boundary
 

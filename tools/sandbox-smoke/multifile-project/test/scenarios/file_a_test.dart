@@ -3,7 +3,8 @@ import 'package:test/test.dart';
 void main() {
   group('group A', () {
     test('test 1', () {
-      print('EXECUTED_1 ENV=${const String.fromEnvironment('BATCH_SCOPE')}');
+      print('EXECUTED_1 ENV=${const String.fromEnvironment('BATCH_SCOPE')} '
+          'DISABLED=${const String.fromEnvironment('DISABLED_SCOPE', defaultValue: 'absent')}');
       expect(1 + 1, 2);
     });
     test('test 2', () {

@@ -13,6 +13,7 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import dev.igorshahin.execution.*;
 import dev.igorshahin.filter.TestVisibility;
 import dev.igorshahin.model.ExplorerNode;
+import dev.igorshahin.settings.TestArgument;
 import dev.igorshahin.settings.TestExplorerSettings;
 import java.awt.*;
 import java.nio.file.*;
@@ -61,7 +62,10 @@ public final class FilteredExecutionSmoke implements StartupActivity.DumbAware {
                         require(output.toString().contains("EXECUTED_A") && output.toString().contains("EXECUTED_B"), "A and B actually executed");
                         require(!output.toString().contains("EXECUTED_C") && !output.toString().contains("EXECUTED_D"), "C and D never executed");
                         if (stage == 1) {
-                            require(output.toString().contains("ENV=ok"), "Global --dart-define reached the Flutter test body");
+                            require(output.toString().contains("ENV=two words"),
+                                "one global argument containing whitespace reached the Flutter test body intact");
+                            require(output.toString().contains("DISABLED=absent") && !output.toString().contains("DISABLED=leaked"),
+                                "disabled argument physically absent from Flutter argv");
                             require(starts == 1, "PARTIAL Flutter group used ONE native execution");
                             stage = 2;
                             output.setLength(0);
@@ -101,7 +105,11 @@ public final class FilteredExecutionSmoke implements StartupActivity.DumbAware {
                     ExplorerNode group = find(complete, "Filtered suite");
                     TestExplorerSettings settings = project.getService(TestExplorerSettings.class);
                     settings.setExcludedNodeIds(excluded);
-                    settings.setGlobalArguments("--dart-define=FILTER_SCOPE=ok --timeout=30s");
+                    settings.setTestArguments(List.of(
+                        new TestArgument("--dart-define=FILTER_SCOPE=two words", true),
+                        new TestArgument("--timeout=30s", true),
+                        new TestArgument("--dart-define=DISABLED_SCOPE=must not leak", false)
+                    ));
                     TestExecutionPlan plan = new TestExecutionPlanner().plan(complete, group.getId(), settings.getExcludedNodeIds());
                     require(plan.getError() == null && plan.getTargets().size() == 1, "persistent Visibility resolves one filtered target");
                     planned = plan.getTargets().get(0);
@@ -118,7 +126,7 @@ public final class FilteredExecutionSmoke implements StartupActivity.DumbAware {
     private void runDart(Project project) {
         ReadAction.nonBlocking(() -> {
             var config = new TestConfigurationFactory(project).create(planned.getTarget(), "Dart filtered smoke", false,
-                "--timeout=30s", planned.getNameFilter());
+                List.of("--timeout=30s"), planned.getNameFilter());
             config.getConfiguration().checkConfiguration();
             return config;
         }).inSmartMode(project).finishOnUiThread(ModalityState.any(), config ->

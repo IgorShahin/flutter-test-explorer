@@ -3,7 +3,8 @@ import 'package:test/test.dart';
 void main() {
   group('Filtered suite', () {
     test('A.* [one] (x)+? ^| "quoted"', () {
-      print('EXECUTED_A ENV=${const String.fromEnvironment('FILTER_SCOPE')}');
+      print('EXECUTED_A ENV=${const String.fromEnvironment('FILTER_SCOPE')} '
+          'DISABLED=${const String.fromEnvironment('DISABLED_SCOPE', defaultValue: 'absent')}');
       expect(1 + 1, 2);
     });
     test('B - кириллица 😀', () {
