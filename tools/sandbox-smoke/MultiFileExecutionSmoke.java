@@ -13,6 +13,7 @@ import com.intellij.openapi.wm.*;
 import dev.igorshahin.execution.*;
 import dev.igorshahin.filter.TestVisibility;
 import dev.igorshahin.model.ExplorerNode;
+import dev.igorshahin.settings.TestArgument;
 import dev.igorshahin.settings.TestExplorerSettings;
 import io.flutter.run.test.TestConfig;
 import java.awt.*;
@@ -58,6 +59,7 @@ public final class MultiFileExecutionSmoke implements StartupActivity.DumbAware 
                         String file = Path.of(config.getFields().getTestFile()).getFileName().toString();
                         String args = config.getFields().getAdditionalArgs();
                         require(args.contains("--dart-define=BATCH_SCOPE=ok"), "global arguments retained for " + file);
+                        require(!args.contains("DISABLED_SCOPE"), "disabled argument absent from native configuration for " + file);
                         require(config.getFields().getTestName() == null, "file target, not cross-file group target");
                         require(file.equals(starts == 1 ? "file_a_test.dart" : "file_b_test.dart"), "deterministic file order: " + file);
                         require(args.contains("--name=") == (starts == 1), "PARTIAL filtered / FULL unfiltered: " + file);
@@ -99,6 +101,8 @@ public final class MultiFileExecutionSmoke implements StartupActivity.DumbAware 
                         require(output.toString().contains("EXECUTED_1 ENV=ok") &&
                             output.toString().contains("EXECUTED_3 ENV=ok") && output.toString().contains("EXECUTED_4 ENV=ok"),
                             "included tests in both files actually executed with global defines");
+                        require(output.toString().contains("DISABLED=absent") && !output.toString().contains("DISABLED=leaked"),
+                            "disabled argument physically absent from every Flutter argv");
                         require(!output.toString().contains("EXECUTED_HIDDEN"), "excluded test and excluded file never executed");
                         for (var source : sources.entrySet())
                             require(Arrays.equals(source.getValue(), Files.readAllBytes(source.getKey())), "source unchanged: " + source.getKey().getFileName());
@@ -118,7 +122,11 @@ public final class MultiFileExecutionSmoke implements StartupActivity.DumbAware 
                     Set<String> excluded = Set.of(find(complete, "test 2").getId(), find(complete, "file_c_test.dart").getId());
                     var settings = project.getService(TestExplorerSettings.class);
                     settings.setExcludedNodeIds(excluded);
-                    settings.setGlobalArguments("--dart-define=BATCH_SCOPE=ok --timeout=30s");
+                    settings.setTestArguments(List.of(
+                        new TestArgument("--dart-define=BATCH_SCOPE=ok", true),
+                        new TestArgument("--timeout=30s", true),
+                        new TestArgument("--dart-define=DISABLED_SCOPE=leaked", false)
+                    ));
                     var planner = new TestExecutionPlanner();
                     var plan = planner.plan(complete, complete.getId(), settings.getExcludedNodeIds());
                     require(plan.getError() == null && plan.getTargets().size() == 2, "Run All plans two included files");

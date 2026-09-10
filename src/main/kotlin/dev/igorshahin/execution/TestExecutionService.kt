@@ -36,7 +36,7 @@ class TestExecutionService @JvmOverloads constructor(private val project: Projec
     private val pending = ArrayDeque<Pair<ExplorerNode, RunnerAndConfigurationSettings>>()
     private var active: RunnerAndConfigurationSettings? = null
     private var activePath: String? = null
-    private data class Request(val scope: TestRunScope, val excluded: Set<String>, val arguments: String,
+    private data class Request(val scope: TestRunScope, val excluded: Set<String>, val arguments: List<String>,
                                var model: ExplorerNode, val completedFiles: MutableSet<String> = mutableSetOf())
     private var request: Request? = null
     private var preparing = false
@@ -82,7 +82,7 @@ class TestExecutionService @JvmOverloads constructor(private val project: Projec
         val settings = project.getService(TestExplorerSettings::class.java)
         val selected = TestVisibility.find(complete, selectedId)
         if (selected == null) { notifyError("The selected test no longer exists."); return }
-        request = Request(TestRunScope.from(selected), settings.excludedNodeIds, settings.globalArguments, complete)
+        request = Request(TestRunScope.from(selected), settings.excludedNodeIds, settings.enabledArgumentValues, complete)
         prepareLatest()
     }
 

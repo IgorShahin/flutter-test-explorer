@@ -3,8 +3,8 @@ package dev.igorshahin.execution
 import com.intellij.execution.RunManager
 import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.RunConfiguration
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.util.execution.ParametersListUtil
 import com.jetbrains.lang.dart.ide.runner.test.DartTestRunConfiguration
 import com.jetbrains.lang.dart.ide.runner.test.DartTestRunConfigurationType
 import com.jetbrains.lang.dart.ide.runner.test.DartTestRunnerParameters
@@ -16,7 +16,7 @@ import io.flutter.run.test.TestFields
 
 /** Uses official configuration models; never edits an existing user configuration or a template. */
 class TestConfigurationFactory(private val project: Project) {
-    fun create(target: TestRunTarget, label: String, flutter: Boolean, arguments: String,
+    fun create(target: TestRunTarget, label: String, flutter: Boolean, arguments: List<String>,
                nameFilter: String? = null): RunnerAndConfigurationSettings {
         require(GlobalTestArguments.validationError(arguments) == null) { GlobalTestArguments.validationError(arguments).orEmpty() }
         require(nameFilter == null || (target.kind == TestRunTargetKind.FILE && nameFilter.isNotEmpty() &&
@@ -49,7 +49,9 @@ class TestConfigurationFactory(private val project: Project) {
                 // FlutterSdk.flutterTest. Supply our union via the official additionalArgs field
                 // of a FILE configuration instead. Only this adapter may add a target selector.
                 configuration.fields = configuration.fields.copy().apply {
-                    additionalArgs = GlobalTestArguments.merge(additionalArgs, "--name=$nameFilter")
+                    additionalArgs = FlutterArgumentTransport.encodeForNativeField(
+                        FlutterArgumentTransport.decodeNativeField(additionalArgs) + "--name=$nameFilter",
+                    )
                 }
             }
             is DartTestRunConfiguration -> configuration.runnerParameters.apply {
@@ -58,34 +60,45 @@ class TestConfigurationFactory(private val project: Project) {
             }
         }
         settings.isTemporary = true
+        logRunnerArguments(settings.configuration)
         return settings
     }
 
-    private fun applyArguments(configuration: RunConfiguration, arguments: String) {
+    private fun applyArguments(configuration: RunConfiguration, arguments: List<String>) {
         when (configuration) {
             is TestConfig -> configuration.fields = configuration.fields.copy().apply {
                 val combined = GlobalTestArguments.merge(additionalArgs, arguments)
                 require(GlobalTestArguments.validationError(combined) == null) {
                     "The Flutter test template contains target selectors. Remove them from the template first."
                 }
-                // Flutter 95 uses String.split(" "), not IntelliJ's quote-aware parser.
-                // Normalize separators but never split a single logical value into new CLI
-                // arguments (which could introduce another path/name selector).
-                val tokens = ParametersListUtil.parse(combined)
-                require(tokens.none { token -> token.isEmpty() || token.any(Char::isWhitespace) }) {
-                    "Flutter 95 cannot pass additional argument values containing spaces through its native test configuration. " +
-                        "For such dart-define values, use --dart-define-from-file with a path without spaces. Nothing was started."
-                }
-                additionalArgs = tokens.joinToString(" ")
+                // Flutter 95 splits this native String field on literal spaces. Encode every logical
+                // token here; FlutterTestArgumentCommandLineCustomizer restores exact argv elements.
+                additionalArgs = FlutterArgumentTransport.encodeForNativeField(combined)
             }
             is DartTestRunConfiguration -> configuration.runnerParameters.apply {
                 val combined = GlobalTestArguments.merge(testRunnerOptions, arguments)
                 require(GlobalTestArguments.validationError(combined) == null) {
                     "The Dart test template contains target selectors. Remove them from the template first."
                 }
-                testRunnerOptions = combined
+                // Dart's native runner parses this quote-aware representation back into these tokens.
+                testRunnerOptions = GlobalTestArguments.renderForDart(combined)
             }
             else -> error("Unsupported test configuration")
         }
+    }
+
+    private fun logRunnerArguments(configuration: RunConfiguration) {
+        if (!LOG.isDebugEnabled) return
+        val (runner, arguments) = when (configuration) {
+            is TestConfig -> "Flutter" to FlutterArgumentTransport.decodeNativeField(configuration.fields.additionalArgs)
+            is DartTestRunConfiguration ->
+                "Dart" to GlobalTestArguments.parseLegacy(configuration.runnerParameters.testRunnerOptions.orEmpty())
+            else -> return
+        }
+        LOG.debug("Test Explorer $runner additional argv: ${arguments.joinToString(prefix = "[", postfix = "]")}")
+    }
+
+    private companion object {
+        val LOG = Logger.getInstance(TestConfigurationFactory::class.java)
     }
 }

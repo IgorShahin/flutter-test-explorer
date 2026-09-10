@@ -3,10 +3,24 @@ package dev.igorshahin.execution
 import com.intellij.util.execution.ParametersListUtil
 
 object GlobalTestArguments {
-    fun merge(existing: String?, global: String): String =
-        listOfNotNull(existing?.trim()?.takeIf { it.isNotEmpty() }, global.trim().takeIf { it.isNotEmpty() })
-            .joinToString(" ")
+    /** The only parser for the pre-structured settings value and native template strings. */
+    fun parseLegacy(arguments: String): List<String> =
+        arguments.takeIf(String::isNotBlank)?.let(ParametersListUtil::parse).orEmpty()
 
+    fun merge(existing: String?, arguments: List<String>): List<String> =
+        parseLegacy(existing.orEmpty()) + arguments
+
+    fun renderForDart(arguments: List<String>): String = ParametersListUtil.join(arguments)
+
+    fun validationError(arguments: List<String>): String? {
+        if (arguments.any(String::isBlank)) return "Arguments cannot be empty. Remove the empty row or enter a value."
+        if (arguments.any { '\u0000' in it }) return "Arguments cannot contain a NUL character."
+        val forbidden = arguments.firstOrNull(::isForbiddenSelector)
+        if (forbidden != null) return "Test target selectors ($forbidden) are managed by Test Explorer to protect hidden tests."
+        return null
+    }
+
+    /** Kept only for validating/migrating the legacy free-form value. */
     fun validationError(arguments: String): String? {
         var quote: Char? = null
         var escaped = false
@@ -19,33 +33,14 @@ object GlobalTestArguments {
             }
         }
         if (quote != null) return "Close the quoted argument before applying settings."
-        val forbidden = ParametersListUtil.parse(arguments).firstOrNull { token ->
-            token == "--" || token == "-n" || token == "-N" ||
-                token.startsWith("--name=") || token == "--name" ||
-                token.startsWith("--plain-name=") || token == "--plain-name" ||
-                (token.startsWith("-n") && !token.startsWith("--")) ||
-                (token.startsWith("-N") && !token.startsWith("--")) ||
-                (!token.startsWith('-') && token.endsWith(".dart"))
-        }
-        if (forbidden != null) return "Test target selectors ($forbidden) are managed by Test Explorer to protect hidden tests."
-        var expectsValue = false
-        ParametersListUtil.parse(arguments).forEach { token ->
-            if (expectsValue) {
-                expectsValue = false
-            } else if (token.startsWith('-')) {
-                expectsValue = token in VALUE_OPTIONS
-            } else {
-                return "Positional test paths are not allowed. For other option values, use --option=value."
-            }
-        }
-        if (expectsValue) return "The last option is missing its value."
-        return null
+        return validationError(parseLegacy(arguments))
     }
 
-    private val VALUE_OPTIONS = setOf(
-        "--dart-define", "--dart-define-from-file", "--device-id", "-d", "--flavor", "--timeout",
-        "--concurrency", "-j", "--platform", "-p", "--tags", "-t", "--exclude-tags", "-x",
-        "--reporter", "-r", "--file-reporter", "--coverage-path", "--coverage-package",
-        "--test-randomize-ordering-seed", "--total-shards", "--shard-index", "--observatory-port",
-    )
+    private fun isForbiddenSelector(token: String): Boolean =
+        token == "--" || token == "-n" || token == "-N" ||
+            token.startsWith("--name=") || token == "--name" ||
+            token.startsWith("--plain-name=") || token == "--plain-name" ||
+            (token.startsWith("-n") && !token.startsWith("--")) ||
+            (token.startsWith("-N") && !token.startsWith("--")) ||
+            (!token.startsWith('-') && token.endsWith(".dart"))
 }

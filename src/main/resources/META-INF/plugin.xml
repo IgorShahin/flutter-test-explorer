@@ -42,6 +42,10 @@
                 affected test file. Manual refresh is not required for normal work.
             </li>
             <li>
+                <b>Structured run arguments:</b> add, edit, enable, disable, and reorder individual CLI arguments.
+                The list starts empty; disabled values remain saved without being passed to Dart or Flutter.
+            </li>
+            <li>
                 <b>Native IDE workflow:</b> use inline Run actions, Run Selected, Run All in Visible Scope,
                 keyboard shortcuts, source navigation, and the standard IntelliJ Run tool window.
             </li>
@@ -86,6 +90,11 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Tests" factoryClass="dev.igorshahin.ui.TestExplorerToolWindowFactory"
                     anchor="left" icon="/icons/testExplorer.svg"/>
+        <projectConfigurable groupId="tools" id="dev.igorshahin.flutter-test-explorer.settings"
+                             displayName="Flutter Test Explorer"
+                             instance="dev.igorshahin.settings.TestExplorerConfigurable"
+                             nonDefaultProject="true"/>
+        <commandLineEnvCustomizer implementation="dev.igorshahin.execution.FlutterTestArgumentCommandLineCustomizer"/>
         <notificationGroup id="Flutter Test Explorer" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 
