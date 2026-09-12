@@ -6,16 +6,12 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.impl.source.PsiFileImpl
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import com.jetbrains.lang.dart.psi.DartCallExpression
 import com.jetbrains.lang.dart.psi.DartFile
 import dev.igorshahin.filter.TestVisibility
 import dev.igorshahin.model.*
 
 class TestSourceStampTest : BasePlatformTestCase() {
-    private fun discovery() = DartTestDiscovery(project, object : TestRunnabilityValidator {
-        override fun kind(call: DartCallExpression) = if (call.expression?.text == "test") DartTestKind.TEST else null
-        override fun isRunnable(call: DartCallExpression, name: String) = true
-    })
+    private fun discovery() = DartTestDiscovery(project, PsiFixtureOutlineProvider())
 
     fun testPsiCacheInvalidationDoesNotInvalidateRunLocations() {
         val file = myFixture.configureByText("sample_test.dart", "void main() { test('stable', () {}); }") as DartFile

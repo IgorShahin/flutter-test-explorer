@@ -8,7 +8,7 @@ Target: IDEA 2025.3.5 / 253.33514.17, Dart 508.1.0, Flutter plugin 95.0.0. The s
 - `AllIcons.Nodes.TestGroup` was verified in the actual Platform binary and rendered successfully as the registered window icon. Run action icon constants are unchanged.
 - Native More Tool Windows lists Tests after removal from the sidebar. Invoking its native action restores Tests. Hide, move right/back and auto-hide/pin state changes passed.
 - The real analyzer discovered both roots, arbitrary nested directories, nested groups and the nonstandard `checks.dart` entrypoint. Helpers and empty groups/files/directories were absent.
-- No project-specific paths/names exist in `src/main`. Suffix matching remains only a candidate fast path, complemented by Dart's entrypoint index; it does not authorize runnable nodes.
+- No project-specific paths/names exist in `src/main`. Candidates are every Dart file under a package test root; the analyzer outline, not a filename or `main()` heuristic, authorizes nodes.
 - 61 automatic tests passed; `buildPlugin`, `verifyPluginStructure` and `verifyPluginProjectConfiguration` succeeded. ZIP contents were inspected: only the production plugin JAR, no smoke harness.
 
 ## Render regression found by the sandbox check

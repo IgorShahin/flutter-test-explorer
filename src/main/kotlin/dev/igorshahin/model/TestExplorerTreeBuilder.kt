@@ -51,14 +51,14 @@ class TestExplorerTreeBuilder {
         relativeFilePath: String,
         parentNames: List<String>,
         parentIds: List<String>,
-        parentNamesStatic: Boolean = true,
+        parentRuntimeNamesKnown: Boolean = true,
     ): List<MutableNode> {
         val occurrences = mutableMapOf<Pair<DartTestKind, String>, Int>()
         return items.mapNotNull { item ->
             val key = item.kind to item.name
             val occurrence = occurrences.getOrDefault(key, 0)
             occurrences[key] = occurrence + 1
-            fromTestItem(item, relativeFilePath, parentNames, parentIds, occurrence, parentNamesStatic)
+            fromTestItem(item, relativeFilePath, parentNames, parentIds, occurrence, parentRuntimeNamesKnown)
         }
     }
 
@@ -68,7 +68,7 @@ class TestExplorerTreeBuilder {
         parentNames: List<String>,
         parentIds: List<String>,
         occurrence: Int,
-        parentNamesStatic: Boolean,
+        parentRuntimeNamesKnown: Boolean,
     ): MutableNode? {
         val kind = when (item.kind) {
             DartTestKind.GROUP -> ExplorerNodeKind.GROUP
@@ -76,7 +76,9 @@ class TestExplorerTreeBuilder {
             DartTestKind.TEST_WIDGETS -> ExplorerNodeKind.TEST_WIDGETS
         }
         val logicalPath = parentNames + item.name
-        val runtimeNameKnown = parentNamesStatic && item.runtimeNameKnown
+        // The runner reports a name built from every enclosing group, so one unknown ancestor
+        // makes the whole logical path unknown.
+        val runtimeNameKnown = parentRuntimeNamesKnown && item.runtimeNameKnown
         val children = fromTestItems(item.children, relativeFilePath, logicalPath,
             parentIds + "${item.kind}:${item.name}@$occurrence", runtimeNameKnown)
         if (item.kind == DartTestKind.GROUP && children.isEmpty()) return null
@@ -87,10 +89,14 @@ class TestExplorerTreeBuilder {
             location = item.location,
             id = TestNodeId.test(relativeFilePath, kind, parentIds + item.name, occurrence),
             runnable = item.runnable,
-            runTarget = item.takeIf { it.runnable }?.let {
+            // A node whose runtime name is unknown stays visible and stays part of its file's
+            // execution, but it gets no name target of its own: the analyzer's spelling would be
+            // an approximation, and an approximate selector can run the wrong test or none at all.
+            // Such a node is reached by running its file instead, which the planner falls back to.
+            runTarget = item.takeIf { it.runnable && runtimeNameKnown }?.let {
                 TestRunTarget(TestRunTargetKind.NAME, item.location.filePath, item.name,
-                    logicalPath.joinToString(" ").takeIf { runtimeNameKnown },
-                    hotRestartId = if (item.kind != DartTestKind.GROUP && runtimeNameKnown) {
+                    logicalPath.joinToString(" "),
+                    hotRestartId = if (item.kind != DartTestKind.GROUP) {
                         "${relativeFilePath.replace('\\', '/')}#${logicalPath.joinToString("#")}"
                     } else null)
             },

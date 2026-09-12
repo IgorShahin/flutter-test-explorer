@@ -15,6 +15,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.GlobalSearchScopesCore
 import com.jetbrains.lang.dart.psi.DartFile
 import dev.igorshahin.model.DartTestFile
+import dev.igorshahin.model.DartTestKind
 import dev.igorshahin.model.DartTestItem
 import dev.igorshahin.model.SourceLocation
 
@@ -131,14 +132,14 @@ internal class DartTestDiscovery(
 
     private fun DiscoveredTestOutline.toModel(path: String, sourceStamp: Long): DartTestItem? {
         val modelChildren = children.mapNotNull { it.toModel(path, sourceStamp) }
-        if (kind == dev.igorshahin.model.DartTestKind.GROUP && modelChildren.isEmpty()) return null
+        // A group the analyzer reports with no tests under it is structure without content.
+        if (kind == DartTestKind.GROUP && modelChildren.isEmpty()) return null
         return DartTestItem(
             kind = kind,
             name = name,
             location = SourceLocation(path, offset, sourceStamp),
             children = modelChildren,
             runnable = true,
-            nameIsStatic = nameIsStatic,
             runtimeNameKnown = runtimeNameKnown,
         )
     }

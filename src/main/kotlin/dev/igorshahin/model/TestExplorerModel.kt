@@ -18,8 +18,8 @@ data class DartTestItem(
     val location: SourceLocation,
     val children: List<DartTestItem> = emptyList(),
     val runnable: Boolean = true,
-    val nameIsStatic: Boolean = true,
-    val runtimeNameKnown: Boolean = nameIsStatic,
+    /** True only when this item's own reported name is the name the test runner reports. */
+    val runtimeNameKnown: Boolean = true,
 )
 
 data class DartTestFile(

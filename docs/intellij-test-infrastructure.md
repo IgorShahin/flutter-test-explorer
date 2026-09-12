@@ -6,17 +6,38 @@ Inspected with `jar tf` and `javap -p -c` against the actual project dependencie
 
 | Question | Installed implementation and decision |
 | --- | --- |
-| Dart `test()` / `group()` / nesting | `com.jetbrains.lang.dart.ide.runner.util.TestUtil` checks exact expression spelling. `findTestElement` walks enclosing calls. Alone it accepts unrelated methods, so the adapter also resolves the declaration to package test/test_api, rejects helper/setup contexts and asks the official producer for an exact name target. |
+| Dart `test()` / `group()` / nesting | `com.jetbrains.lang.dart.ide.runner.util.TestUtil` checks exact expression spelling and `findTestElement` walks enclosing calls, so spelling alone accepts unrelated methods. The explorer does not classify calls at all: the analysis server's `UNIT_TEST_TEST` / `UNIT_TEST_GROUP` outline decides what a test is, for Dart and Flutter packages alike. |
 | Flutter test/widgets/custom wrappers | `io.flutter.run.test.FlutterTestLineMarkerContributor` delegates to `TestLineMarkerContributor` and `TestConfigUtils` / `CommonTestConfigUtils`. Their private `OutlineCache` maps analyzer `UNIT_TEST_TEST` and `UNIT_TEST_GROUP` elements to PSI calls via `DartSyntax.findClosestEnclosingFunctionCall`. Detection does not depend on a custom method-name list. |
-| Names | Flutter `CommonTestConfigUtils.extractTestName` supports a first-argument `DartStringLiteralExpression`. Dart's utility unquotes arbitrary first-argument text, which is insufficient proof of a static target. Explorer only accepts literal non-interpolated strings and uses the same Dart unquoting helper. |
+| Names | Verified against Dart 3.6.0 on 232 real `UNIT_TEST_*` nodes plus a probe: the analyzer reports `callee("<text>")`, **always double-quoted**, never the raw source spelling. `<text>` is the argument's *value* when it is statically known — escapes, raw strings, triple-quote folding and adjacent-literal concatenation already applied — and the argument's *source text* otherwise. An un-evaluable string literal therefore arrives with its own quotes intact (`test('a $b')` → `test("'a $b'")`), which is the signal that the name is assembled at run time. `FlutterTestOutlineIndex.parseTestName` strips the analyzer's quotes (as Dart-Code does) and treats only that quoted-literal shape as non-exact. A first argument that is not a string literal at all (a variable, a call) is reported as bare source text and **cannot** be told apart from a literal of the same characters; Dart-Code shares that blind spot, and the Hot Restart controller rejects an id absent from the runtime manifest rather than running something else. |
 | Gutter configuration | `DartTestRunConfigurationProducer` and `FlutterTestConfigProducer` use the context and SDK/package/test-root checks. Flutter can silently fall back to a file configuration if the active-editor outline cache does not identify a call. Explorer never counts that fallback as evidence that a leaf is runnable. |
-| Filenames and roots | In these versions, Dart's producer calls `DartCommandLineRuntimeConfigurationProducer.getRunnableDartFileFromContext` (requires `main`) and `isFileInTestDirAndTestPackageExists` (package test root/dependency). Flutter's `TestConfigUtils.asTestCall` and file producer use `FlutterUtils.isInTestDir`. Neither requires `_test.dart` inside a recognized test directory. Flutter's optional non-test source-root fallback does require that suffix. Explorer scopes candidates to package test roots, uses `DartComponentIndex.getAllFiles("main", scope)` alongside the suffix fast path, then validates actual calls; arbitrary helpers are not promoted to runnable targets. |
-| Single/group/file/directory | Dart `DartTestRunnerParameters.Scope`: `GROUP_OR_TEST_BY_NAME`, `FILE`, `FOLDER`. Flutter `TestFields.forTestName`, `forFile`, `forDir`. Explorer validates a name configuration only after analyzer/producer recognition. |
+| Filenames and roots | In these versions, Dart's producer calls `DartCommandLineRuntimeConfigurationProducer.getRunnableDartFileFromContext` (requires `main`) and `isFileInTestDirAndTestPackageExists` (package test root/dependency). Flutter's `TestConfigUtils.asTestCall` and file producer use `FlutterUtils.isInTestDir`. Neither requires `_test.dart` inside a recognized test directory. Explorer scopes candidates to package test roots and treats **every** Dart file there as a candidate: no `main()` shape and no filename suffix is required, because a file with no analyzer test entities simply contributes nothing. |
+| Single/group/file/directory | Dart `DartTestRunnerParameters.Scope`: `GROUP_OR_TEST_BY_NAME`, `FILE`, `FOLDER`. Flutter `TestFields.forTestName`, `forFile`, `forDir`. A name target is built only for a node whose whole logical path is known to be the runtime name; otherwise the node carries no name target and is reached by running its file. |
 | Extra arguments | Settings persist ordered `{ value, enabled }` entries and execution snapshots only enabled values as `List<String>`. Flutter's string-only `TestFields.additionalArgs` receives reversible transport tokens; a public IntelliJ command-line customizer restores them as individual process argv elements. Dart receives a quote-aware `DartTestRunnerParameters.testRunnerOptions` value that its native runner parses back to tokens. `arguments`/VM options are not substitutes for test-runner options. |
 | Partial subset | Dart `MULTIPLE_NAMES` passes `testName` as raw `-n` regexp. Flutter `useRegexp(true)` **escapes one literal**, so it cannot carry an arbitrary union: use `TestFields.forFile` plus `additionalArgs` containing `--name=<exact union>`. Full names come from static group/test descriptions. Unknown names and indistinguishable duplicates fail closed. See [native execution research](filtered-execution.md). |
 | Run All exclusions | Explicit included files, sequential official Run sessions. Partially included files get one exact-name filter each, excluded files are omitted. Named runs overlapping hidden siblings switch to an exact filter. The whole batch is checked before starting. |
 | Persistent IDs | Project-relative encoded file/directory path; type + enclosing group identities + name + duplicate occurrence for test nodes. No PSI/offset persistence. Renames produce new IDs; stale entries do not affect discovery. |
 | Native checkboxes | `CheckboxTree`, `CheckedTreeNode`, `CheckboxTreeBase.CheckPolicy` and the built-in `ThreeStateCheckBox` renderer. Visibility is a separate immutable model transformation. |
+
+## Analyzer-owned hierarchy
+
+Discovery mirrors Dart-Code / VS Code: the Dart Analysis Server's `FlutterOutline` is the single
+source of truth for the test tree.
+
+- `FlutterTestOutlineIndex` subscribes to outlines for the candidate set and is the production
+  `TestOutlineProvider`. `collectTestChildren` lifts the `UNIT_TEST_GROUP` / `UNIT_TEST_TEST`
+  nesting into the explorer hierarchy; anything else the analyzer reports around a test
+  (functions, classes, extensions) is a wrapper, so its test descendants are hoisted.
+- Custom wrappers annotated `@isTest` / `@isTestGroup`, tear-offs, and registrations outside a
+  particular `main()` shape therefore need no reverse engineering: the analyzer already reports
+  them, so no method-name list or syntactic nesting rule exists in this plugin.
+- PSI is no longer part of recognition. It supplies the `DartFile` handle the analyzer APIs need,
+  validates that a snapshot still matches the current source (`textLength` against the outline
+  length, plus a source digest), converts analyzer offsets, and serves navigation. There is
+  deliberately **no** PSI discovery fallback: guessing a hierarchy the analyzer has not reported
+  would produce entries that cannot be reconciled or safely targeted, so a candidate without an
+  outline is marked pending and the run barrier waits for it.
+- `DartTestDiscovery` collects candidates and maps outlines to the model. `TestOutlineProvider`
+  carries no run-configuration or call-expression contract, keeping discovery and execution apart.
 
 ## API stability / fallback policy
 
@@ -24,7 +45,7 @@ Inspected with `jar tf` and `javap -p -c` against the actual project dependencie
 
 **Public JVM classes but plugin implementation APIs (no third-party stability promise):** Dart PSI/TestUtil, Dart test producer/configuration/parameters, Flutter test configuration/fields, `FlutterDartAnalysisServer`, `FlutterOutlineListener`, `DartSyntax`, `ActiveEditorsOutlineService`. Their use is isolated in discovery/execution adapters. Changing versions can break binary compatibility or target semantics; the Gradle dependencies are pinned and configuration-generation/sandbox checks are required when upgrading.
 
-**Private API deliberately not accessed:** `CommonTestConfigUtils.OutlineCache` and its map-building routine. Since the official public-facing helper only exposes active-editor data, the adapter subscribes to the same server's outlines for candidate test files and mirrors the small protocol-kind → PSI-call mapping. It does not copy semantic analyzer detection, inspect private fields, or fall back to regex/source-name matching. If analysis/config validation is unavailable, the candidate is omitted.
+**Private API deliberately not accessed:** `CommonTestConfigUtils.OutlineCache` and its map-building routine. Since the official public-facing helper only exposes active-editor data, the adapter subscribes to the same server's outlines for candidate test files and reads the hierarchy straight out of the protocol. It does not map outline elements back onto PSI calls, copy semantic analyzer detection, inspect private fields, or fall back to regex/source-name matching. While the analyzer has no outline for a candidate, that file is explicitly pending rather than reported empty.
 
 ### Duplicate protocol classes: verified sandbox issue
 

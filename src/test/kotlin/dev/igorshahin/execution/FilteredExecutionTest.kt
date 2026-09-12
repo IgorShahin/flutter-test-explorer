@@ -105,11 +105,25 @@ class FilteredExecutionTest {
     }
 
     @Test fun `unknown full names fail closed for partial but not full files`() {
-        val root = model(group("dynamic", test("A"), test("B")).copy(nameIsStatic = false, runtimeNameKnown = false))
+        val root = model(group("dynamic", test("A"), test("B")).copy(runtimeNameKnown = false))
         val partial = plan(root, "checks.dart", setOf(find(root, "B").id))
         assertTrue(partial.error!!.contains("full runtime name is unknown"))
         assertTrue(partial.targets.isEmpty())
         assertNull(plan(root, "checks.dart", emptySet()).targets.single().nameFilter)
+    }
+
+    @Test fun `selecting a node whose runtime name is unknown never starts an approximate run`() {
+        val root = model(group("dynamic", test("A"), test("B")).copy(runtimeNameKnown = false))
+        listOf("dynamic", "A").forEach { label ->
+            val plan = plan(root, label, emptySet())
+            assertEquals(ExecutionScopeState.FULL, plan.scopeState)
+            assertTrue(label, plan.error!!.contains("full runtime name is unknown"))
+            assertTrue(label, plan.targets.isEmpty())
+        }
+        // The whole file still runs natively, which is how such a test is reached.
+        val file = plan(root, "checks.dart", emptySet()).targets.single()
+        assertEquals(TestRunTargetKind.FILE, file.target.kind)
+        assertNull(file.nameFilter)
     }
 
     @Test fun `multi file scope keeps full files native filters partial files and omits excluded files`() {

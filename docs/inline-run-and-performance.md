@@ -16,11 +16,11 @@ Run actions stay available during discovery and smart-mode waits. `RunDiscoveryB
 
 ## 3. Review and measured bottlenecks
 
-Before this change, every relevant VFS event and outline notification queued `discoverProject()`: package-root lookup, test-root VFS walks, PSI discovery of every candidate, full immutable tree construction, and replacement of the complete Swing model. Filtering already avoided PSI, but recursively transformed and recreated the Swing tree on EDT. Nested calls also reclassified/resolved parent groups repeatedly. Expansion, selection and scrolling were lost on replacement.
+Before this change, every relevant VFS event and outline notification queued `discoverProject()`: package-root lookup, test-root VFS walks, rediscovery of every candidate, full immutable tree construction, and replacement of the complete Swing model. Filtering already avoided PSI, but recursively transformed and recreated the Swing tree on EDT. Expansion, selection and scrolling were lost on replacement.
 
-The existing discovery was already a background read action; the problem was repeated global work and EDT tree replacement, not a claim that all PSI parsing ran on EDT. Classification is now memoized within each file's read action.
+The existing discovery was already a background read action; the problem was repeated global work and EDT tree replacement, not a claim that all PSI parsing ran on EDT. Per-file outline snapshots are reused across refreshes instead of being recomputed.
 
-Sandbox profiling also caught a proposed optimization that was slower: independently traversing the Flutter application's import graph cost about 1 second for this sample. It was removed for Flutter, whose analyzer already supplies dependency-aware outlines. Only Dart-only files use the cached index graph.
+Sandbox profiling also caught a proposed optimization that was slower: independently traversing the application's import graph cost about 1 second for this sample. It was removed for files the analyzer watches, since the analysis server already republishes dependency-affected outlines for Dart and Flutter packages alike. The cached index graph remains for paths outside the watched candidate set.
 
 ## 4. Cache and model update
 
@@ -34,16 +34,16 @@ Sandbox profiling also caught a proposed optimization that was slower: independe
 
 - One disposable VFS listener handles content/create/delete/copy/rename/move events; both old and new paths are invalidated. Directory changes reconcile just that subtree when the package roots remain known. Hidden/build-directory noise is ignored, except relevant package configuration.
 - One disposable editor document listener catches unsaved edits. One project-root listener handles SDK/module/root changes.
-- Flutter subscribes to the entire candidate set through the official analyzer. Preparing one cache miss never unsubscribes other files. Distinct outlines carry monotonic local revisions; a duplicate payload/stamp does not queue duplicate discovery. Analyzer reconnects resubscribe and invalidate stale results.
-- Dart-only files use reverse transitive import/export/part dependencies. The existing Dart indexes and URL resolver are consulted without helper PSI. Direct dependency results are themselves cached by source stamp. Missing relative imports remain tracked so later creation invalidates their importers.
+- Candidate reconciliation owns the subscription set and declares it through `FlutterTestOutlineIndex.watch`. Discovering one cache miss only *prepares* that file's outline; `prepare` is additive by contract, so it never unsubscribes other files or drops their snapshots. Distinct outlines carry monotonic local revisions; a duplicate payload/stamp does not queue duplicate discovery. Analyzer reconnects resubscribe and invalidate stale results.
+- Paths outside the watched set use reverse transitive import/export/part dependencies. The existing Dart indexes and URL resolver are consulted without helper PSI. Direct dependency results are themselves cached by source stamp. Missing relative imports remain tracked so later creation invalidates their importers.
 - `MergingUpdateQueue` debounces discovery for 350 ms with restart-on-add, search for 120 ms. EDT document events mark pending paths synchronously, before an immediate Run can race past them. Events arriving during discovery accumulate for the next batch; they do not cancel/restart it merely because another event arrived.
 - `ReadAction.nonBlocking().inSmartMode(project).withDocumentsCommitted(project)` postpones index-dependent work without blocking EDT. The old model stays visible in Dumb Mode with a busy indicator. Only a successful batch reaches EDT; failures keep the last model and retry on a later event/Refresh. Both queues, listeners, promises and analyzer subscriptions are tied to panel disposal.
 
 ## 6. Reused indexes/APIs
 
-Candidate selection: `FilenameIndex`, `FileTypeIndex`, `GlobalSearchScopesCore.directoryScope` intersected with project scope, and project-content membership. Dart dependency data: `DartImportAndExportIndex`, `DartPartUriIndex`, `DartUrlResolver`. Flutter recognition: the existing official analyzer-outline adapter and configuration validation, unchanged in authority.
+Candidate selection: `FilenameIndex`, `FileTypeIndex`, `GlobalSearchScopesCore.directoryScope` intersected with project scope, and project-content membership. Dart dependency data: `DartImportAndExportIndex`, `DartPartUriIndex`, `DartUrlResolver`. Recognition: the official analyzer-outline adapter alone.
 
-`DartComponentIndex`/`DartSymbolIndex`/PSI stubs index declarations, not a complete catalogue of semantic test registration call sites or custom annotated wrapper calls. `PsiSearchHelper` cannot supply that runnability guarantee either. No custom FileBasedIndex/StubIndex is introduced.
+`DartComponentIndex`/`DartSymbolIndex`/PSI stubs index declarations, not a complete catalogue of semantic test registration call sites or custom annotated wrapper calls. `PsiSearchHelper` cannot supply that guarantee either; the analysis server already does, so candidate collection stays a cheap file-level question and no custom FileBasedIndex/StubIndex is introduced.
 
 The [platform indexing documentation](https://plugins.jetbrains.com/docs/intellij/file-based-indexes.html) and [threading model](https://plugins.jetbrains.com/docs/intellij/threading-model.html) support this indexed, cancellable background-work design. Coroutines are a supported alternative; the existing non-blocking read API is retained rather than introducing a second concurrency model into the plugin.
 

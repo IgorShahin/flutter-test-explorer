@@ -8,7 +8,6 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.jetbrains.lang.dart.psi.DartFile
 import dev.igorshahin.model.DartTestKind
-import io.flutter.dart.DartSyntax
 import io.flutter.dart.FlutterDartAnalysisServer
 import io.flutter.dart.FlutterOutlineListener
 import com.google.gson.JsonObject
@@ -55,13 +54,15 @@ internal class FlutterTestOutlineIndex(
         DartAnalysisServerService.getInstance(project).addAnalysisServerListener(serverListener)
     }
 
+    /**
+     * Declares the complete candidate set: subscribes to [files] and releases every other
+     * subscription. Only the owner of candidate reconciliation may call this.
+     */
     @Synchronized
     fun watch(files: List<VirtualFile>) {
         if (disposed) return
+        val server = connectedServer() ?: return
         val paths = files.map { it.path }.toSet()
-        val server = FlutterDartAnalysisServer.getInstance(project)
-        waitingForConnection = !server.isServerConnected
-        if (waitingForConnection) return
         (if (reconnectPending) listeners.keys.toSet() else listeners.keys - paths).forEach { path ->
             server.removeOutlineListener(server.analysisService.getLocalFileUri(path), listeners.remove(path)!!)
             snapshots.remove(path)
@@ -69,6 +70,29 @@ internal class FlutterTestOutlineIndex(
             requestedSourceDigests.remove(path)
         }
         reconnectPending = false
+        subscribe(server, files)
+    }
+
+    /**
+     * Discovery of a subset - a single cache miss, or one file in a fixture - only has to make
+     * those outlines available. It must never speak for the candidate set: releasing the files it
+     * was not asked about would drop their snapshots, and the analyzer does not resend an outline
+     * for a source that did not change.
+     */
+    @Synchronized
+    override fun prepare(files: List<DartFile>) {
+        if (disposed) return
+        val server = connectedServer() ?: return
+        subscribe(server, files.mapNotNull { it.virtualFile })
+    }
+
+    private fun connectedServer(): FlutterDartAnalysisServer? {
+        val server = FlutterDartAnalysisServer.getInstance(project)
+        waitingForConnection = !server.isServerConnected
+        return server.takeUnless { waitingForConnection }
+    }
+
+    private fun subscribe(server: FlutterDartAnalysisServer, files: List<VirtualFile>) {
         files.forEach { file ->
             if (file.path in listeners) return@forEach
             val subscribedPath = file.path
@@ -98,8 +122,6 @@ internal class FlutterTestOutlineIndex(
             server.addOutlineListener(FileUtil.toSystemDependentName(file.path), listener)
         }
     }
-
-    override fun prepare(files: List<DartFile>) = watch(files.mapNotNull { it.virtualFile })
 
     fun revision(path: String): Long = snapshots[path]?.revision ?: 0L
     fun isAwaitingAnalysis(path: String): Boolean = path in awaitingAnalysis
@@ -162,12 +184,6 @@ internal class FlutterTestOutlineIndex(
         return collectTestChildren(file, outline.children, outline.length)
     }
 
-    /** Kept as a narrow compatibility helper for protocol regression tests. */
-    fun testCalls(file: PsiFile): Map<Int, DartTestKind> {
-        val outline = currentOutline(file) ?: return emptyMap()
-        return mapTestCalls(file, outline)
-    }
-
     /** Re-subscribe one stale source so the official Flutter analysis service sends its current
      * outline even when an editor update was coalesced without a notification. This is a targeted
      * analyzer request, not a project rescan, and at most one request is made per source digest. */
@@ -216,35 +232,17 @@ internal class FlutterTestOutlineIndex(
         private fun decodeOutline(outline: Any): AnalyzerOutline =
             AnalyzerOutline.fromJson(outline.javaClass.getMethod("toJson").invoke(outline) as JsonObject)
 
-        internal fun mapTestCalls(file: PsiFile, outline: AnalyzerOutline): Map<Int, DartTestKind> {
-            val result = mutableMapOf<Int, DartTestKind>()
-            fun visit(node: AnalyzerOutline) {
-                val kind = when (node.elementKind) {
-                    "UNIT_TEST_TEST" -> DartTestKind.TEST
-                    "UNIT_TEST_GROUP" -> DartTestKind.GROUP
-                    else -> null
-                }
-                if (kind != null) {
-                    val offset = if (file.textLength == outline.length) node.offset else
-                        DartAnalysisServerService.getInstance(file.project).getConvertedOffset(file.virtualFile, node.offset)
-                    val call = file.findElementAt(offset)?.let(DartSyntax::findClosestEnclosingFunctionCall)
-                    if (call != null) {
-                        result[call.textOffset] = if (kind == DartTestKind.TEST &&
-                            call.expression?.text?.substringAfterLast('.') == "testWidgets") {
-                            DartTestKind.TEST_WIDGETS
-                        } else kind
-                    }
-                }
-                node.children.forEach(::visit)
-            }
-            visit(outline)
-            return result
-        }
-
+        /**
+         * Lifts the analyzer's `UNIT_TEST_GROUP` / `UNIT_TEST_TEST` nesting into the explorer
+         * hierarchy. Everything else the analyzer reports around a test - functions, classes,
+         * extensions - is not part of the test hierarchy, so its test descendants are hoisted
+         * rather than shown, which is how VS Code renders the same outline.
+         */
         internal fun collectTestChildren(
             file: PsiFile,
             nodes: List<AnalyzerOutline>,
             rootLength: Int,
+            ancestorNamesKnown: Boolean = true,
         ): List<DiscoveredTestOutline> = buildList {
             nodes.forEach { node ->
                 val kind = when (node.elementKind) {
@@ -254,44 +252,84 @@ internal class FlutterTestOutlineIndex(
                     else -> null
                 }
                 if (kind == null) {
-                    addAll(collectTestChildren(file, node.children, rootLength))
+                    addAll(collectTestChildren(file, node.children, rootLength, ancestorNamesKnown))
                     return@forEach
                 }
-                val name = extractTestName(node.elementName) ?: run {
-                    // An analyzer test without a usable identity cannot be reconciled or targeted.
-                    // Continue walking because valid nested analyzer nodes may still exist.
-                    addAll(collectTestChildren(file, node.children, rootLength))
+                val parsed = parseTestName(node.elementName) ?: run {
+                    // A test entity the analyzer reports without any identity cannot be labelled.
+                    // Keep its descendants visible, but the runner still prefixes their names with
+                    // this group, so no descendant may claim an exact runtime name any more.
+                    addAll(collectTestChildren(file, node.children, rootLength, ancestorNamesKnown = false))
                     return@forEach
                 }
                 val offset = if (file.textLength == rootLength) node.offset else
                     DartAnalysisServerService.getInstance(file.project)
                         .getConvertedOffset(file.virtualFile, node.offset)
-                val runtimeNameKnown = !INTERPOLATION.containsMatchIn(name)
-                val children = collectTestChildren(file, node.children, rootLength)
-                add(DiscoveredTestOutline(kind, name, offset, children,
-                    nameIsStatic = runtimeNameKnown, runtimeNameKnown = runtimeNameKnown))
+                add(DiscoveredTestOutline(kind, parsed.text, offset,
+                    // Ancestry is combined per level by the tree builder, which owns the logical
+                    // path. Only a dropped ancestor has to be carried down from here.
+                    collectTestChildren(file, node.children, rootLength, ancestorNamesKnown),
+                    runtimeNameKnown = ancestorNamesKnown && parsed.isExactRuntimeName))
             }
         }
 
-        /** Port of Dart-Code's analyzer-outline name extraction, kept loader-independent. */
-        internal fun extractTestName(elementName: String?): String? {
+        /**
+         * The analyzer reports a test's identity as `callee("<text>")` - always double-quoted,
+         * never the raw source spelling. Verified against Dart 3.6.0 / analysis server on 232 real
+         * `UNIT_TEST_*` nodes plus a purpose-built probe:
+         *
+         *  - when the first argument has a statically known String value, `<text>` IS that value,
+         *    with escapes, raw-string semantics, triple-quote folding and adjacent-literal
+         *    concatenation already applied. `r'raw\name'` arrives as `test("raw\name")`.
+         *  - otherwise `<text>` is the argument's source text. An un-evaluable *string literal*
+         *    therefore arrives with its original quotes intact - `test('a $b')` becomes
+         *    `test("'a $b'")` - which is the signal that the name is assembled at run time.
+         *
+         * Dart-Code reads the label out of the same field, relying on that guaranteed quoting.
+         *
+         * Execution needs one thing more than a label: whether `<text>` IS the name the test
+         * runner will report. It is, unless the analyzer handed back an un-evaluated literal.
+         */
+        internal fun parseTestName(elementName: String?): OutlineTestName? {
             if (elementName.isNullOrBlank()) return null
             val openParen = elementName.indexOf('(')
             val closeParen = elementName.lastIndexOf(')')
-            if (openParen == -1 || closeParen == -1 || openParen >= closeParen || openParen + 2 > closeParen - 1) {
-                return null
-            }
-            var name = elementName.substring(openParen + 2, closeParen - 1)
-            if (name.length >= 2 && (name.first() == '\'' || name.first() == '"') &&
-                (name.last() == '\'' || name.last() == '"')) {
-                name = name.substring(1, name.length - 1)
-            }
-            return name.takeIf(String::isNotBlank)
+            if (openParen == -1 || openParen >= closeParen) return null
+            val reported = elementName.substring(openParen + 1, closeParen).trim()
+            // The analyzer wraps its own payload in double quotes; Dart-Code strips exactly this.
+            val text = if (reported.length >= 2 && reported.first() == '"' && reported.last() == '"') {
+                reported.substring(1, reported.length - 1)
+            } else reported
+            if (text.isEmpty()) return null
+            return OutlineTestName(text, isExactRuntimeName = !isUnevaluatedLiteral(text))
         }
 
-        private val INTERPOLATION = Regex("(?<!\\\\)\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\{)")
+        /**
+         * True when the analyzer gave back the source text of a string literal instead of its
+         * value, which happens only when the value is not statically known - interpolation being
+         * the case that reaches real projects. Such a name exists at run time but is not this
+         * text, so it must never become a `--name` selector or a run identity.
+         *
+         * A first argument that is not a string literal at all (a variable, a call) is reported
+         * as bare source text and cannot be told apart from a literal of the same characters.
+         * Dart-Code shares that blind spot; the Hot Restart controller rejects an id that is
+         * absent from the runtime manifest, so such a target fails instead of running something
+         * else.
+         */
+        private fun isUnevaluatedLiteral(text: String): Boolean {
+            val body = text.removePrefix("r")
+            val quote = body.firstOrNull()?.takeIf { it == '\'' || it == '"' } ?: return false
+            return body.length >= 2 && body.last() == quote
+        }
+
     }
 }
+
+/**
+ * A test name as the analyzer spells it, plus whether that spelling is also the name the Dart
+ * test runner will report. Only an exact name may become a `--name` selector or a run identity.
+ */
+internal data class OutlineTestName(val text: String, val isExactRuntimeName: Boolean)
 
 /** Loader-independent snapshot; no PSI and no plugin-owned protocol objects escape the adapter. */
 internal data class AnalyzerOutline(

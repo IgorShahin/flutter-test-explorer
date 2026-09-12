@@ -4,21 +4,13 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
 import com.intellij.openapi.vfs.VirtualFile
-import com.jetbrains.lang.dart.psi.DartCallExpression
 import com.jetbrains.lang.dart.psi.DartFile
 import dev.igorshahin.model.*
 
 class IndexedDiscoveryTest : BasePlatformTestCase() {
-    private fun discovery() = DartTestDiscovery(project, object : TestRunnabilityValidator {
-        override fun kind(call: DartCallExpression) = when (call.expression?.text) {
-            "test" -> DartTestKind.TEST
-            "group" -> DartTestKind.GROUP
-            else -> null
-        }
-        override fun isRunnable(call: DartCallExpression, name: String) = true
-    })
+    private fun discovery() = DartTestDiscovery(project, PsiFixtureOutlineProvider())
 
-    fun testDartIndexesIncludeNonstandardEntrypointsWithoutHelperPsi() {
+    fun testDartIndexesIncludeEveryAnalyzerCandidateUnderTestRoots() {
         myFixture.addFileToProject("test/folder/a_test.dart", "void main() {}")
         val entrypoint = myFixture.addFileToProject("test/folder/checks.dart", "void main() {}")
         myFixture.addFileToProject("test/helper.dart", "void helper() {}")
@@ -26,9 +18,11 @@ class IndexedDiscoveryTest : BasePlatformTestCase() {
         myFixture.addFileToProject("test/build/generated_test.dart", "void main() {}")
         myFixture.addFileToProject("lib/noise_test.dart", "void main() {}")
         val root = myFixture.tempDirFixture.getFile("test")!!
-        assertEquals(listOf("a_test.dart", "checks.dart"), discovery().collectDartFiles(root).map { it.name })
+        assertEquals(listOf("a_test.dart", "checks.dart", "helper.dart"),
+            discovery().collectDartFiles(root).map { it.name })
         assertTrue(discovery().isCandidateFile(entrypoint.virtualFile))
-        assertFalse(discovery().isCandidateFile(myFixture.tempDirFixture.getFile("test/helper.dart")!!))
+        // A helper is not excluded by its name or shape: it simply reports no analyzer tests.
+        assertTrue(discovery().isCandidateFile(myFixture.tempDirFixture.getFile("test/helper.dart")!!))
     }
 
     fun testRootsAreDiscoveredForBothSingleAndNestedPackages() {
@@ -50,7 +44,7 @@ class IndexedDiscoveryTest : BasePlatformTestCase() {
             "void main() { group('protocol', () { group('messages', () { test('decode', () {}); }); }); }")
         myFixture.addFileToProject("integration_test/devices/session_test.dart",
             "void main() { test('connect', () {}); group('empty', () {}); }")
-        myFixture.addFileToProject("test/util/helper.dart", "void helper() { test('noise', () {}); }")
+        myFixture.addFileToProject("test/util/helper.dart", "void helper() { utility('noise'); }")
         myFixture.addFileToProject("integration_test/unused/empty_test.dart", "void main() { group('empty', () {}); }")
         val discovery = discovery()
         val files = discovery.findTestRoots(projectRoot).flatMap(discovery::collectDartFiles).map {
@@ -69,10 +63,13 @@ class IndexedDiscoveryTest : BasePlatformTestCase() {
         assertEquals(listOf("integration_test"), discovery().findTestRoots(projectRoot).map { it.name })
     }
 
-    fun testEditingMainAddsAndRemovesNonstandardCandidate() {
+    fun testCandidateStatusDoesNotDependOnTheShapeOfTheSource() {
         val file = myFixture.addFileToProject("test/checks.dart", "void helper() {}")
         val document = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(file)!!
-        assertFalse(discovery().isCandidateFile(file.virtualFile))
+        // Candidacy is a cheap file-level question. Whether a candidate holds tests is answered by
+        // the analyzer outline, so editing a main() in or out must not move files in and out of
+        // the watched set and churn analyzer subscriptions.
+        assertTrue(discovery().isCandidateFile(file.virtualFile))
         fun replace(text: String) {
             com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) { document.setText(text) }
             com.intellij.psi.PsiDocumentManager.getInstance(project).commitAllDocuments()
@@ -80,7 +77,7 @@ class IndexedDiscoveryTest : BasePlatformTestCase() {
         replace("void main() { test('new', () {}); }")
         assertTrue(discovery().isCandidateFile(file.virtualFile))
         replace("void helper() {}")
-        assertFalse(discovery().isCandidateFile(file.virtualFile))
+        assertTrue(discovery().isCandidateFile(file.virtualFile))
     }
 
     private fun flatten(node: ExplorerNode): List<ExplorerNode> = listOf(node) + node.children.flatMap(::flatten)
