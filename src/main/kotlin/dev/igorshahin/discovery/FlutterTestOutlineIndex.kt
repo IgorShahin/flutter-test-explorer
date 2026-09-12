@@ -6,6 +6,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
+import com.jetbrains.lang.dart.psi.DartFile
 import dev.igorshahin.model.DartTestKind
 import io.flutter.dart.DartSyntax
 import io.flutter.dart.FlutterDartAnalysisServer
@@ -25,7 +26,7 @@ internal class FlutterTestOutlineIndex(
     private val project: Project,
     private val changed: (String?) -> Unit,
     private val outlineRequestOverride: ((String) -> Unit)?,
-) : Disposable {
+) : Disposable, TestOutlineProvider {
     constructor(project: Project, changed: (String?) -> Unit) : this(project, changed, null)
     private data class Snapshot(val outline: AnalyzerOutline, val sourceDigest: String, val revision: Long)
     private val snapshots = ConcurrentHashMap<String, Snapshot>()
@@ -98,6 +99,8 @@ internal class FlutterTestOutlineIndex(
         }
     }
 
+    override fun prepare(files: List<DartFile>) = watch(files.mapNotNull { it.virtualFile })
+
     fun revision(path: String): Long = snapshots[path]?.revision ?: 0L
     fun isAwaitingAnalysis(path: String): Boolean = path in awaitingAnalysis
 
@@ -114,7 +117,7 @@ internal class FlutterTestOutlineIndex(
         }
     }
 
-    fun testCalls(file: PsiFile): Map<Int, DartTestKind> {
+    private fun currentOutline(file: PsiFile): AnalyzerOutline? {
         val path = file.virtualFile.path
         val snapshot = snapshots[path]
         val outline = if (snapshot == null) {
@@ -139,13 +142,30 @@ internal class FlutterTestOutlineIndex(
             if (file.textLength != convertedLength) return pending(path, "outline length mismatch")
         }
         awaitingAnalysis.remove(path)
-        return mapTestCalls(file, outline)
+        return outline
     }
 
-    private fun pending(path: String, reason: String): Map<Int, DartTestKind> {
+    private fun pending(path: String, reason: String): AnalyzerOutline? {
         awaitingAnalysis += path
         LOG.debug("Test Explorer waiting for analyzer outline ($reason): $path")
-        return emptyMap()
+        return null
+    }
+
+    /**
+     * Builds the explorer hierarchy directly from the official analyzer outline. This is the
+     * same source used by Dart-Code and Flutter gutter markers, so wrappers annotated with
+     * `@isTest`/`@isTestGroup`, tear-offs and registrations outside a particular `main()` shape
+     * do not have to be reverse-engineered from PSI.
+     */
+    override fun testItems(file: DartFile): List<DiscoveredTestOutline> {
+        val outline = currentOutline(file) ?: return emptyList()
+        return collectTestChildren(file, outline.children, outline.length)
+    }
+
+    /** Kept as a narrow compatibility helper for protocol regression tests. */
+    fun testCalls(file: PsiFile): Map<Int, DartTestKind> {
+        val outline = currentOutline(file) ?: return emptyMap()
+        return mapTestCalls(file, outline)
     }
 
     /** Re-subscribe one stale source so the official Flutter analysis service sends its current
@@ -220,15 +240,75 @@ internal class FlutterTestOutlineIndex(
             visit(outline)
             return result
         }
+
+        internal fun collectTestChildren(
+            file: PsiFile,
+            nodes: List<AnalyzerOutline>,
+            rootLength: Int,
+        ): List<DiscoveredTestOutline> = buildList {
+            nodes.forEach { node ->
+                val kind = when (node.elementKind) {
+                    "UNIT_TEST_TEST" -> if (node.elementName?.substringBefore('(')
+                            ?.substringAfterLast('.') == "testWidgets") DartTestKind.TEST_WIDGETS else DartTestKind.TEST
+                    "UNIT_TEST_GROUP" -> DartTestKind.GROUP
+                    else -> null
+                }
+                if (kind == null) {
+                    addAll(collectTestChildren(file, node.children, rootLength))
+                    return@forEach
+                }
+                val name = extractTestName(node.elementName) ?: run {
+                    // An analyzer test without a usable identity cannot be reconciled or targeted.
+                    // Continue walking because valid nested analyzer nodes may still exist.
+                    addAll(collectTestChildren(file, node.children, rootLength))
+                    return@forEach
+                }
+                val offset = if (file.textLength == rootLength) node.offset else
+                    DartAnalysisServerService.getInstance(file.project)
+                        .getConvertedOffset(file.virtualFile, node.offset)
+                val runtimeNameKnown = !INTERPOLATION.containsMatchIn(name)
+                val children = collectTestChildren(file, node.children, rootLength)
+                add(DiscoveredTestOutline(kind, name, offset, children,
+                    nameIsStatic = runtimeNameKnown, runtimeNameKnown = runtimeNameKnown))
+            }
+        }
+
+        /** Port of Dart-Code's analyzer-outline name extraction, kept loader-independent. */
+        internal fun extractTestName(elementName: String?): String? {
+            if (elementName.isNullOrBlank()) return null
+            val openParen = elementName.indexOf('(')
+            val closeParen = elementName.lastIndexOf(')')
+            if (openParen == -1 || closeParen == -1 || openParen >= closeParen || openParen + 2 > closeParen - 1) {
+                return null
+            }
+            var name = elementName.substring(openParen + 2, closeParen - 1)
+            if (name.length >= 2 && (name.first() == '\'' || name.first() == '"') &&
+                (name.last() == '\'' || name.last() == '"')) {
+                name = name.substring(1, name.length - 1)
+            }
+            return name.takeIf(String::isNotBlank)
+        }
+
+        private val INTERPOLATION = Regex("(?<!\\\\)\\$(?:[A-Za-z_][A-Za-z0-9_]*|\\{)")
     }
 }
 
 /** Loader-independent snapshot; no PSI and no plugin-owned protocol objects escape the adapter. */
-internal data class AnalyzerOutline(val offset: Int, val length: Int, val elementKind: String?, val children: List<AnalyzerOutline>) {
+internal data class AnalyzerOutline(
+    val offset: Int,
+    val length: Int,
+    val elementKind: String?,
+    val elementName: String?,
+    val children: List<AnalyzerOutline>,
+) {
+    constructor(offset: Int, length: Int, elementKind: String?, children: List<AnalyzerOutline>) :
+        this(offset, length, elementKind, null, children)
+
     companion object {
         fun fromJson(json: JsonObject): AnalyzerOutline = AnalyzerOutline(
             json.get("offset").asInt, json.get("length").asInt,
             json.getAsJsonObject("dartElement")?.get("kind")?.asString,
+            json.getAsJsonObject("dartElement")?.get("name")?.asString,
             json.getAsJsonArray("children")?.map { fromJson(it.asJsonObject) }.orEmpty(),
         )
     }

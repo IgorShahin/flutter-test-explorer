@@ -69,7 +69,7 @@ class TestExplorerPanel(
         requestDiscovery(if (path == null) DiscoveryChanges(rescan = true, invalidateAll = true)
             else DiscoveryChanges(outlines = setOf(path)))
     }
-    private val discovery = DartTestDiscovery(project, IntelliJTestRunnabilityValidator(project, outlines))
+    private val discovery = DartTestDiscovery(project, outlines)
     private val backend = IndexedDiscoveryBackend(project, discovery, outlines)
     private val cache = DiscoveryCache(backend)
     private val patcher = TestModelPatcher()

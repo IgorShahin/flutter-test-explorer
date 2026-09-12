@@ -13,7 +13,6 @@ import com.jetbrains.lang.dart.util.DartUrlResolver
 import dev.igorshahin.discovery.DiscoveryCache.Companion.beneath
 import dev.igorshahin.model.DartTestFile
 import java.nio.file.Path
-import io.flutter.pub.PubRootCache
 
 /** All methods run in a committed, smart-mode read action. Only discover() requests candidate PSI. */
 internal class IndexedDiscoveryBackend(private val project: Project, private val discovery: DartTestDiscovery,
@@ -22,7 +21,7 @@ internal class IndexedDiscoveryBackend(private val project: Project, private val
                                         private val findFile: (String) -> VirtualFile? = LocalFileSystem.getInstance()::findFileByPath,
 ) : DiscoveryBackend {
     private var roots: List<VirtualFile> = emptyList()
-    private var flutterPaths: Set<String> = emptySet()
+    private var analyzerPaths: Set<String> = emptySet()
     private data class Imports(val sourceStamp: Long, val paths: Set<String>)
     private val directDependencies = mutableMapOf<String, Imports>()
 
@@ -54,10 +53,9 @@ internal class IndexedDiscoveryBackend(private val project: Project, private val
         }
         // Subscriptions describe the entire candidate set, not just today's cache misses.
         if (changes.rescan || result.keys != previous.files.keys) {
-            val pubRoots = PubRootCache.getInstance(project)
-            val flutterFiles = result.keys.mapNotNull(findFile).filter { pubRoots.getRoot(it)?.declaresFlutter() == true }
-            flutterPaths = flutterFiles.map { it.path }.toSet()
-            outlines.watch(flutterFiles)
+            val analyzerFiles = result.keys.mapNotNull(findFile)
+            analyzerPaths = analyzerFiles.map { it.path }.toSet()
+            outlines.watch(analyzerFiles)
         }
         return result
     }
@@ -82,10 +80,9 @@ internal class IndexedDiscoveryBackend(private val project: Project, private val
     }
 
     override fun dependencies(path: String): Set<String> {
-        // Flutter's analyzer already tracks semantic dependencies and republishes affected test
-        // outlines. Traversing the application's imports here duplicated that work (~1s in smoke
-        // profiling), without improving recognition. Keep the index graph for Dart-only targets.
-        if (path in flutterPaths) return emptySet()
+        // The Dart Analysis Server tracks semantic dependencies and republishes affected test
+        // outlines for both Dart and Flutter packages. Do not duplicate its import graph here.
+        if (path in analyzerPaths) return emptySet()
         val visited = mutableSetOf<String>()
         val pending = ArrayDeque<String>()
         pending.add(path)
@@ -118,7 +115,7 @@ internal class IndexedDiscoveryBackend(private val project: Project, private val
 
     override fun checkCanceled() = ProgressManager.checkCanceled()
 
-    override fun awaitingAnalysis(path: String): Boolean = path in flutterPaths && outlines.isAwaitingAnalysis(path)
+    override fun awaitingAnalysis(path: String): Boolean = path in analyzerPaths && outlines.isAwaitingAnalysis(path)
 
     private fun sourceStamp(file: VirtualFile) =
         TestSourceStamp.current(file)
