@@ -1,6 +1,7 @@
 package dev.igorshahin.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
@@ -63,5 +64,66 @@ class TestExplorerTreeBuilderTest {
 
         assertEquals(listOf("first", "group"), file.children.map { it.label })
         assertEquals("nested", file.children[1].children.single().label)
+    }
+
+    @Test
+    fun `derives Hot Restart identity from relative file and complete logical path`() {
+        val location = SourceLocation("/project/integration_test/features/returns/returns_test.dart", 1)
+        val root = TestExplorerTreeBuilder().build(
+            listOf(
+                DartTestFile(
+                    "integration_test/features/returns/returns_test.dart",
+                    location,
+                    listOf(
+                        DartTestItem(
+                            DartTestKind.GROUP,
+                            "ВОЗВРАТЫ",
+                            location,
+                            listOf(
+                                DartTestItem(
+                                    DartTestKind.GROUP,
+                                    "Коробки возврата",
+                                    location,
+                                    listOf(DartTestItem(DartTestKind.TEST, "Создание коробки", location)),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val test = root.children.single().children.single().children.single()
+            .children.single().children.single().children.single().children.single()
+
+        assertEquals(
+            "integration_test/features/returns/returns_test.dart#ВОЗВРАТЫ#Коробки возврата#Создание коробки",
+            test.runTarget?.hotRestartId,
+        )
+    }
+
+    @Test
+    fun `does not invent Hot Restart identity for a dynamic runtime path`() {
+        val location = SourceLocation("/project/integration_test/dynamic_test.dart", 1)
+        val root = TestExplorerTreeBuilder().build(
+            listOf(
+                DartTestFile(
+                    "integration_test/dynamic_test.dart",
+                    location,
+                    listOf(
+                        DartTestItem(
+                            DartTestKind.GROUP,
+                            "dynamic",
+                            location,
+                            listOf(DartTestItem(DartTestKind.TEST, "test", location)),
+                            runtimeNameKnown = false,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val test = root.children.single().children.single().children.single().children.single()
+        assertNull(test.runTarget?.hotRestartId)
     }
 }

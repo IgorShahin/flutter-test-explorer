@@ -76,8 +76,9 @@ class TestExplorerTreeBuilder {
             DartTestKind.TEST_WIDGETS -> ExplorerNodeKind.TEST_WIDGETS
         }
         val logicalPath = parentNames + item.name
+        val runtimeNameKnown = parentNamesStatic && item.runtimeNameKnown
         val children = fromTestItems(item.children, relativeFilePath, logicalPath,
-            parentIds + "${item.kind}:${item.name}@$occurrence", parentNamesStatic && item.runtimeNameKnown)
+            parentIds + "${item.kind}:${item.name}@$occurrence", runtimeNameKnown)
         if (item.kind == DartTestKind.GROUP && children.isEmpty()) return null
         if (item.kind != DartTestKind.GROUP && !item.runnable) return null
         return MutableNode(
@@ -88,7 +89,10 @@ class TestExplorerTreeBuilder {
             runnable = item.runnable,
             runTarget = item.takeIf { it.runnable }?.let {
                 TestRunTarget(TestRunTargetKind.NAME, item.location.filePath, item.name,
-                    logicalPath.joinToString(" ").takeIf { parentNamesStatic && item.runtimeNameKnown })
+                    logicalPath.joinToString(" ").takeIf { runtimeNameKnown },
+                    hotRestartId = if (item.kind != DartTestKind.GROUP && runtimeNameKnown) {
+                        "${relativeFilePath.replace('\\', '/')}#${logicalPath.joinToString("#")}"
+                    } else null)
             },
         ).apply {
             this.children += children

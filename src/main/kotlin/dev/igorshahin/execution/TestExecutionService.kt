@@ -33,6 +33,7 @@ class TestExecutionService @JvmOverloads constructor(private val project: Projec
                                                     private val refresher: TestModelRefresher? = null) {
     private val planner = TestExecutionPlanner()
     private val factory = TestConfigurationFactory(project)
+    private val hotRestart = HotRestartExecutionResolver(project)
     private val pending = ArrayDeque<Pair<ExplorerNode, RunnerAndConfigurationSettings>>()
     private var active: RunnerAndConfigurationSettings? = null
     private var activePath: String? = null
@@ -106,16 +107,27 @@ class TestExecutionService @JvmOverloads constructor(private val project: Projec
         ReadAction.nonBlocking<Result<List<Pair<ExplorerNode, RunnerAndConfigurationSettings>>>> {
             // Validate the ENTIRE batch before starting anything, avoiding partial accidental runs.
             try {
-                Result.success(targets.map { execution ->
-                    val node = execution.source
-                    val file = checkedSource(node)
-                    val psi = PsiManager.getInstance(project).findFile(file)
-                        ?: throw SourceChanged()
-                    val config = factory.create(execution.target, node.label,
-                        FlutterUtils.isInFlutterProject(project, psi), current.arguments, execution.nameFilter)
+                val isolated = hotRestart.resolve(plan)
+                if (isolated != null) {
+                    isolated.sources.forEach { source ->
+                        val file = checkedSource(source)
+                        val psi = PsiManager.getInstance(project).findFile(file) ?: throw SourceChanged()
+                        check(FlutterUtils.isInFlutterProject(project, psi)) { "Hot Restart target is not a Flutter test." }
+                    }
+                    val selected = TestVisibility.find(model, current.scope.selectedId) ?: throw SourceChanged()
+                    val config = factory.createHotRestart(isolated, selected.label, current.arguments)
                     config.configuration.checkConfiguration()
-                    node to config
-                })
+                    Result.success(listOf(isolated.sources.first() to config))
+                } else Result.success(targets.map { execution ->
+                        val node = execution.source
+                        val file = checkedSource(node)
+                        val psi = PsiManager.getInstance(project).findFile(file)
+                            ?: throw SourceChanged()
+                        val config = factory.create(execution.target, node.label,
+                            FlutterUtils.isInFlutterProject(project, psi), current.arguments, execution.nameFilter)
+                        config.configuration.checkConfiguration()
+                        node to config
+                    })
             } catch (cancelled: ProcessCanceledException) {
                 throw cancelled
             } catch (cancelled: java.util.concurrent.CancellationException) {

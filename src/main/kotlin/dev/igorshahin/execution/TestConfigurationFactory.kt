@@ -16,6 +16,30 @@ import io.flutter.run.test.TestFields
 
 /** Uses official configuration models; never edits an existing user configuration or a template. */
 class TestConfigurationFactory(private val project: Project) {
+    fun createHotRestart(execution: HotRestartExecution, label: String,
+                         arguments: List<String>): RunnerAndConfigurationSettings {
+        require(GlobalTestArguments.validationError(arguments) == null) {
+            GlobalTestArguments.validationError(arguments).orEmpty()
+        }
+        val type = FlutterTestConfigType.getInstance()
+        val settings = RunManager.getInstance(project).createConfiguration(
+            "Tests: $label", type.configurationFactories.first())
+        val configuration = settings.configuration as TestConfig
+        val originalArguments = configuration.fields.additionalArgs
+        configuration.fields = TestFields.forFile(execution.targetPath).apply {
+            additionalArgs = originalArguments
+        }
+        applyArguments(configuration, arguments)
+        val flutterArguments = FlutterArgumentTransport.decodeNativeField(configuration.fields.additionalArgs)
+        configuration.putUserData(
+            HotRestartRunData.KEY,
+            HotRestartRunSpec(execution.targetPath, execution.testIds, flutterArguments),
+        )
+        settings.isTemporary = true
+        logRunnerArguments(configuration)
+        return settings
+    }
+
     fun create(target: TestRunTarget, label: String, flutter: Boolean, arguments: List<String>,
                nameFilter: String? = null): RunnerAndConfigurationSettings {
         require(GlobalTestArguments.validationError(arguments) == null) { GlobalTestArguments.validationError(arguments).orEmpty() }

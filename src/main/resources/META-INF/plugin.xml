@@ -95,6 +95,7 @@
                              instance="dev.igorshahin.settings.TestExplorerConfigurable"
                              nonDefaultProject="true"/>
         <commandLineEnvCustomizer implementation="dev.igorshahin.execution.FlutterTestArgumentCommandLineCustomizer"/>
+        <programRunner implementation="dev.igorshahin.execution.HotRestartProgramRunner" order="first"/>
         <notificationGroup id="Flutter Test Explorer" displayType="BALLOON" isLogByDefault="true"/>
     </extensions>
 

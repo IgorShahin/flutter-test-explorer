@@ -2,6 +2,7 @@ package dev.igorshahin.execution
 
 import com.intellij.execution.RunManager
 import com.intellij.execution.process.CommandLineEnvCustomizer
+import com.intellij.execution.runners.ProgramRunner
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.execution.ParametersListUtil
 import com.intellij.util.xmlb.XmlSerializer
@@ -244,6 +245,49 @@ class TestConfigurationFactoryTest : BasePlatformTestCase() {
         assertTrue(CommandLineEnvCustomizer.EP_NAME.extensionList.any {
             it is FlutterTestArgumentCommandLineCustomizer
         })
+    }
+
+    fun testHotRestartConfigurationKeepsExactIdsAndLogicalFlutterArguments() {
+        val execution = HotRestartExecution(
+            targetPath = "/project/integration_test/hot_restart_all.dart",
+            testIds = listOf("integration_test/a_test.dart#suite#A", "integration_test/b_test.dart#suite#B"),
+            sources = emptyList(),
+        )
+        val arguments = listOf("--dart-define-from-file=env/test.json", "--dart-define=LABEL=two words")
+        val configuration = TestConfigurationFactory(project)
+            .createHotRestart(execution, "all", arguments)
+            .configuration as TestConfig
+
+        assertEquals(execution.targetPath, configuration.fields.testFile)
+        assertNull(configuration.fields.testName)
+        assertEquals(arguments, flutterArguments(configuration))
+        assertEquals(
+            HotRestartRunSpec(execution.targetPath, execution.testIds, arguments),
+            configuration.getUserData(HotRestartRunData.KEY),
+        )
+    }
+
+    fun testHotRestartProgramRunnerIsRegisteredBeforeExecution() {
+        assertTrue(ProgramRunner.PROGRAM_RUNNER_EP.extensionList.any { it is HotRestartProgramRunner })
+        val execution = HotRestartExecution(
+            targetPath = "/project/integration_test/hot_restart_all.dart",
+            testIds = listOf("integration_test/a_test.dart#suite#A"),
+            sources = emptyList(),
+        )
+        val configuration = TestConfigurationFactory(project)
+            .createHotRestart(execution, "all", emptyList())
+            .configuration
+        assertTrue(ProgramRunner.getRunner("Run", configuration) is HotRestartProgramRunner)
+    }
+
+    fun testDeviceArgumentUsesExplicitDeviceAndRemovesItFromFlutterArguments() {
+        assertEquals(
+            "windows" to listOf("--dart-define=ENV=test"),
+            DeviceArgument.extract(listOf("--device-id=windows", "--dart-define=ENV=test"), null),
+        )
+        assertTrue(runCatching {
+            DeviceArgument.extract(listOf("-d", "windows", "--device=linux"), null)
+        }.exceptionOrNull() is com.intellij.execution.ExecutionException)
     }
 
     private fun flutterArguments(configuration: TestConfig): List<String> = FlutterArgumentTransport.expand(
