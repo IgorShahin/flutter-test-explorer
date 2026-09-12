@@ -49,6 +49,7 @@ data class TestRunTarget(
     val fileOrDirectoryPath: String,
     val testName: String? = null,
     val fullName: String? = testName,
+    val hotRestartId: String? = null,
 )
 
 data class ExplorerNode(

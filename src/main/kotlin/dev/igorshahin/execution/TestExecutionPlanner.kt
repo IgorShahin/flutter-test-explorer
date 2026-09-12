@@ -12,6 +12,7 @@ data class TestExecutionPlan(
     val targets: List<PlannedTestExecution> = emptyList(),
     val error: String? = null,
     val scopeState: ExecutionScopeState? = null,
+    val includedTests: List<ExplorerNode> = emptyList(),
 )
 
 /** Run All/directory/root orchestrate file plans, not a cross-entrypoint name target.
@@ -73,6 +74,6 @@ class TestExecutionPlanner {
         nodes.forEach { node ->
             add(node)?.let { return TestExecutionPlan(error = it, scopeState = scope.state) }
         }
-        return TestExecutionPlan(targets, scopeState = scope.state)
+        return TestExecutionPlan(targets, scopeState = scope.state, includedTests = scope.includedTests)
     }
 }
