@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- Run Hot Restart-aware integration test selections through the `flutter_test_isolator` package executable (`dart run flutter_test_isolator --ide-protocol`) when the project has resolved that package; native integration_test result reporting is disabled unless the run arguments already set it.
 - Fix Refresh losing all Flutter tests after IntelliJ clears PSI caches: outline freshness now uses source-content SHA-256, not the PSI cache counter.
 - Distinguish pending Flutter analysis from a completed discovery with no runnable tests; pending results update on analyzer notifications.
 

@@ -12,7 +12,7 @@ import java.nio.file.Path
 class HotRestartExecutionResolverTest : BasePlatformTestCase() {
     fun testCombinesSeveralKnownEntrypointsThroughOneAggregateTarget() {
         val base = Path.of(project.basePath!!)
-        write(base.resolve("tool/hot_restart_runner/hot_restart_runner.dart"), "void main() {}")
+        writeIsolatorPackageConfig(base)
         write(
             base.resolve("integration_test/hot_restart_all.dart"),
             "import 'features/a/a_test.dart';\nimport 'features/b/b_test.dart';",
@@ -30,7 +30,7 @@ class HotRestartExecutionResolverTest : BasePlatformTestCase() {
 
     fun testUsesOriginalEntrypointForOneFileAndRejectsLegacyOrDynamicTests() {
         val base = Path.of(project.basePath!!)
-        write(base.resolve("tool/hot_restart_runner/hot_restart_runner.dart"), "void main() {}")
+        writeIsolatorPackageConfig(base)
         write(base.resolve("integration_test/hot_restart_all.dart"), "import 'features/a/a_test.dart';")
         val supported = leaf(base, "integration_test/features/a/a_test.dart", "A")
         assertEquals(
@@ -47,6 +47,25 @@ class HotRestartExecutionResolverTest : BasePlatformTestCase() {
         val dynamic = supported.copy(runTarget = supported.runTarget!!.copy(hotRestartId = null))
         assertNull(HotRestartExecutionResolver(project).resolve(TestExecutionPlan(includedTests = listOf(dynamic))))
     }
+
+    fun testFallsBackToNativeFlutterRunWithoutResolvedIsolatorPackage() {
+        val base = Path.of(project.basePath!!)
+        write(base.resolve("integration_test/hot_restart_all.dart"), "import 'features/a/a_test.dart';")
+        val plan = TestExecutionPlan(includedTests = listOf(leaf(base, "integration_test/features/a/a_test.dart", "A")))
+        Files.deleteIfExists(base.resolve(".dart_tool/package_config.json"))
+
+        assertNull(HotRestartExecutionResolver(project).resolve(plan))
+        writeIsolatorPackageConfig(base, packageName = "unrelated_package")
+        assertNull(HotRestartExecutionResolver(project).resolve(plan))
+        writeIsolatorPackageConfig(base)
+        assertNotNull(HotRestartExecutionResolver(project).resolve(plan))
+    }
+
+    private fun writeIsolatorPackageConfig(base: Path, packageName: String = "flutter_test_isolator") = write(
+        base.resolve(".dart_tool/package_config.json"),
+        """{"configVersion":2,"packages":[{"name":"$packageName","rootUri":"file:///pub-cache/$packageName/",""" +
+            """"packageUri":"lib/","languageVersion":"3.6"}]}""",
+    )
 
     private fun leaf(base: Path, relative: String, name: String): ExplorerNode {
         val path = base.resolve(relative)

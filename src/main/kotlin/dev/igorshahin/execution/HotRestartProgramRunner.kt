@@ -88,18 +88,28 @@ private class HotRestartCommandLineState(
         val dartSdk = sdk.dartSdkPath ?: throw ExecutionException("The Dart SDK inside Flutter is unavailable.")
         val dart = Path.of(dartSdk, "bin", if (SystemInfo.isWindows) "dart.exe" else "dart").toString()
         val flutter = Path.of(sdk.homePath, "bin", if (SystemInfo.isWindows) "flutter.bat" else "flutter").toString()
-        val runner = Path.of(pubRoot.root.path, "tool", "hot_restart_runner", "hot_restart_runner.dart").toString()
-        val arguments = buildList {
-            addAll(listOf("run", runner, "--device", deviceId, "--target", spec.targetPath, "--flutter", flutter,
-                "--teamcity"))
-            spec.testIds.forEach { add("--test-id=$it") }
-            add("--")
-            addAll(flutterArguments)
-        }
+        val arguments = HotRestartCommand.arguments(deviceId, spec.targetPath, flutter, spec.testIds, flutterArguments)
         return GeneralCommandLine(dart)
             .withWorkDirectory(pubRoot.root.path)
             .withCharset(StandardCharsets.UTF_8)
             .withParameters(arguments)
+    }
+}
+
+/** Command line of the `flutter_test_isolator` package executable in its IDE (`package:test --machine`) mode. */
+internal object HotRestartCommand {
+    const val ISOLATOR_PACKAGE = "flutter_test_isolator"
+    private const val NATIVE_RESULTS_DEFINE = "INTEGRATION_TEST_SHOULD_REPORT_RESULTS_TO_NATIVE"
+
+    /** The package does not disable native result reporting itself; `flutter run` targets need it off. */
+    fun arguments(deviceId: String, targetPath: String, flutter: String, testIds: List<String>,
+                  flutterArguments: List<String>): List<String> = buildList {
+        addAll(listOf("run", ISOLATOR_PACKAGE, "--device", deviceId, "--target", targetPath, "--flutter", flutter,
+            "--ide-protocol"))
+        testIds.forEach { add("--test-id=$it") }
+        add("--")
+        addAll(flutterArguments)
+        if (flutterArguments.none { NATIVE_RESULTS_DEFINE in it }) add("--dart-define=$NATIVE_RESULTS_DEFINE=false")
     }
 }
 
@@ -119,7 +129,7 @@ internal object DeviceArgument {
                 }
                 argument == "--machine" || argument == "-t" || argument == "--target" ||
                     argument.startsWith("--target=") ->
-                    throw ExecutionException("$argument is owned by the Hot Restart runner.")
+                    throw ExecutionException("$argument is owned by flutter_test_isolator.")
                 else -> remaining += argument
             }
             index++
